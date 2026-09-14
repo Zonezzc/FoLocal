@@ -103,8 +103,13 @@ for (const [name, type] of optionalFeedColumns) {
 
 db.exec(
   "CREATE INDEX IF NOT EXISTS entries_inserted ON entries(inserted_at DESC);" +
-    "CREATE INDEX IF NOT EXISTS subscriptions_feed ON subscriptions(feed_id);",
+    "CREATE INDEX IF NOT EXISTS subscriptions_feed ON subscriptions(feed_id);" +
+    "CREATE INDEX IF NOT EXISTS entries_feed_guid ON entries(feed_id, guid);",
 )
+
+const summaryColumns = db.prepare("PRAGMA table_info(summaries)").all() as { name: string }[]
+if (!summaryColumns.some((column) => column.name === "source_hash"))
+  db.exec("ALTER TABLE summaries ADD COLUMN source_hash TEXT")
 
 export const getLocalSetting = (key: string): string | null => {
   const row = db.prepare("SELECT value FROM local_settings WHERE key=?").get(key) as

@@ -19,14 +19,17 @@ FoLocal 将订阅、文章、阅读状态和 AI 配置保存在用户自己的�
 - 支持普通 RSS/Atom 地址以及 `rsshub://` 协议。
 - 可在设置中配置 RSSHub 实例，提供超时和错误说明。
 - 支持部分常见但非标准 RSS 页面与备用 Feed。
-- 支持可配置的 OpenAI-compatible API，用于摘要、翻译和 AI 对话等能力。
+- 支持可配置的 OpenAI-compatible API，用于摘要、翻译和 AI 对话等能力；可从
+  `/models` 获取模型，也兼容无需 API Key 的 Ollama、LM Studio 等本地端口。
 - 自动过滤不适合长文阅读的短内容，并改善正文与摘要回退。
 - 文章列表摘要以纯文本显示，不暴露 HTML 标签。
 
 ## 数据与隐私
 
 - 默认数据库：`~/Library/Application Support/Folo/local-api.db`（macOS）。
-- API Key 和 AI 设置保存在本机数据库中，请自行保护操作系统账户和数据库备份。
+- API Key 和 AI 设置单独保存在 Electron 用户数据目录的 `openai.json` 中，不在 `local-api.db` 内；实际目录以应用“本地服务”页面显示为准。请保护操作系统账户及配置文件。
+- 当前“数据库备份”仅备份 SQLite，不包含 `openai.json`、渲染器本地设置或聊天记录，不能视为完整应用备份。
+- 本地版暂时禁用自动更新，避免接入官方 OTA 通道；请从本仓库 Release 手动更新。
 - RSS 抓取会访问订阅源或用户配置的 RSSHub 实例。
 - AI 功能启用后，所选文章内容会发送至用户配置的 OpenAI-compatible 服务。
 - 本地版不提供云端同步，也不承诺与官方 Folo 服务兼容。
@@ -34,7 +37,7 @@ FoLocal 将订阅、文章、阅读状态和 AI 配置保存在用户自己的�
 ## macOS 下载
 
 Apple Silicon 用户可从本仓库的
-[Releases](https://github.com/Guyungy/Folo-Local/releases) 下载最新版 ZIP。
+[Releases](https://github.com/Guyungy/Folo-Local/releases) 下载最新版 DMG 或 ZIP。
 
 当前构建使用 ad-hoc 签名，未经过 Apple 公证。首次启动如果被 Gatekeeper 拦截，请在
 “系统设置 → 隐私与安全性”中确认打开。请仅从本仓库 Release 下载，并核对发布页提供的

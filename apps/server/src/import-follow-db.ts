@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { DatabaseSync } from "node:sqlite"
+import { pathToFileURL } from "node:url"
+
+import { resolve } from "pathe"
 
 import { db } from "./db.js"
 
@@ -172,7 +175,9 @@ export function importFollowDatabase(sourcePath: string): ImportReport {
           entryId,
           sqlValue(row.language),
         )
-        db.prepare("INSERT INTO summaries VALUES (?,?,?,?,?)").run(
+        db.prepare(
+          "INSERT INTO summaries (entry_id,summary,readability_summary,created_at,language) VALUES (?,?,?,?,?)",
+        ).run(
           entryId,
           String(row.summary),
           sqlValue(row.readability_summary),
@@ -192,5 +197,7 @@ export function importFollowDatabase(sourcePath: string): ImportReport {
   }
 }
 
-const sourcePath = process.argv.slice(2).find((argument) => argument !== "--")
-if (sourcePath) console.log(JSON.stringify(importFollowDatabase(sourcePath), null, 2))
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const sourcePath = process.argv.slice(2).find((argument) => argument !== "--")
+  if (sourcePath) console.log(JSON.stringify(importFollowDatabase(sourcePath), null, 2))
+}

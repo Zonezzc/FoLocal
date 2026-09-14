@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { existsSync, statSync } from "node:fs"
 
 import { Hono } from "hono"
@@ -17,6 +18,7 @@ import {
 } from "./ai.js"
 import { articleContext } from "./chat-context.js"
 import { databasePath, db, jsonValue } from "./db.js"
+import type { ParsedSubscription } from "./opml.js"
 import { buildOpml, parseOpml } from "./opml.js"
 import { refreshFeed } from "./rss.js"
 import {
@@ -172,27 +174,59 @@ app.post("/settings/openai/models", async (c) => {
     )
   }
 })
+const pendingSummaries = new Map<string, Promise<string | null>>()
+
 app.get("/ai/summary", async (c) => {
   const entryId = c.req.query("id") ?? ""
-  const language = c.req.query("language") ?? null
-  const imported = db
-    .prepare(
-      "SELECT summary,readability_summary FROM summaries WHERE entry_id=? AND (language=? OR language IS NULL) ORDER BY language IS NULL LIMIT 1",
-    )
-    .get(entryId, language) as { summary: string; readability_summary: string | null } | undefined
-  const importedSummary = imported?.readability_summary || imported?.summary
-  if (importedSummary && !unavailableSummary(importedSummary)) return c.json(ok(importedSummary))
+  const language = c.req.query("language")?.trim() ?? ""
   const row = db.prepare("SELECT content,description FROM entries WHERE id=?").get(entryId) as
     { content: string | null; description: string | null } | undefined
   const content = row?.content ?? row?.description
-  if (!content) return c.json(ok(null))
-  try {
-    const generated = await generateSummary(content, c.req.query("language"))
-    if (generated) return c.json(ok(generated))
-  } catch (error) {
-    console.warn("OpenAI-compatible summary failed; using local fallback", error)
+  const sourceHash = content ? createHash("sha256").update(content).digest("hex") : null
+  const cached = db
+    .prepare(
+      "SELECT summary,readability_summary,source_hash FROM summaries WHERE entry_id=? AND (language=? OR language IS NULL) ORDER BY language IS NULL, created_at DESC",
+    )
+    .all(entryId, language) as {
+    summary: string
+    readability_summary: string | null
+    source_hash: string | null
+  }[]
+  for (const item of cached) {
+    const summary = item.readability_summary || item.summary
+    if (
+      summary &&
+      !unavailableSummary(summary) &&
+      (!item.source_hash || item.source_hash === sourceHash)
+    )
+      return c.json(ok(summary))
   }
-  return c.json(ok(summarize(content)))
+  if (!content) return c.json(ok(null))
+  const key = JSON.stringify([entryId, language, sourceHash])
+  let pending = pendingSummaries.get(key)
+  if (!pending) {
+    pending = (async () => {
+      try {
+        const generated = await generateSummary(content, language || undefined)
+        if (generated && !unavailableSummary(generated)) {
+          // INSERT SELECT avoids recreating an entry deleted while the provider was responding.
+          db.prepare(
+            `INSERT INTO summaries (entry_id,summary,readability_summary,created_at,language,source_hash)
+            SELECT id,?,NULL,?,?,? FROM entries WHERE id=?
+            ON CONFLICT(entry_id,language) DO UPDATE SET summary=excluded.summary,
+              readability_summary=NULL,created_at=excluded.created_at,source_hash=excluded.source_hash`,
+          ).run(generated, new Date().toISOString(), language, sourceHash, entryId)
+          return generated
+        }
+      } catch (error) {
+        console.warn("OpenAI-compatible summary failed; using local fallback", error)
+      }
+      // Do not cache fallbacks: configuring or recovering the provider must allow another try.
+      return summarize(content)
+    })().finally(() => pendingSummaries.delete(key))
+    pendingSummaries.set(key, pending)
+  }
+  return c.json(ok(await pending))
 })
 app.get("/ai/chat/config", async (c) => {
   const config = await readOpenAIConfig()
@@ -514,9 +548,13 @@ app.get("/feeds", async (c) => {
     }
   }
   if (!row) return c.json({ code: 404, message: "Feed not found" }, 404)
+  const requestedLimit = Number(c.req.query("entriesLimit") ?? 20)
+  const entriesLimit = Number.isInteger(requestedLimit)
+    ? Math.max(0, Math.min(requestedLimit, 100))
+    : 20
   const entries = db
-    .prepare("SELECT * FROM entries WHERE feed_id = ? ORDER BY published_at DESC LIMIT ?")
-    .all(String(row.id), Number(c.req.query("entriesLimit") ?? 20)) as Record<string, unknown>[]
+    .prepare("SELECT * FROM entries WHERE feed_id = ? ORDER BY published_at DESC, id DESC LIMIT ?")
+    .all(String(row.id), entriesLimit) as Record<string, unknown>[]
   const subscription = db
     .prepare("SELECT * FROM subscriptions WHERE user_id = ? AND feed_id = ?")
     .get(c.get("userId"), String(row.id)) as Record<string, unknown> | undefined
@@ -553,12 +591,18 @@ app.get("/feeds/refresh", async (c) => {
  * The renderer used to fan out one request per feed, which hammered the feeds and the IPC channel.
  */
 app.post("/feeds/refresh", async (c) => {
-  const body = await c.req
-    .json<{ ids?: string[] }>()
-    .catch(() => ({ ids: undefined }) as { ids?: string[] })
+  const body = await c.req.json<unknown>().catch(() => null)
+  if (!body || typeof body !== "object" || Array.isArray(body))
+    return c.json({ code: 400, message: "Expected a refresh request object" }, 400)
+  const { ids } = body as { ids?: unknown }
+  if (
+    ids !== undefined &&
+    (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || !id.trim()))
+  )
+    return c.json({ code: 400, message: "ids must be an array of nonempty feed IDs" }, 400)
   if (isRefreshRunning()) return c.json({ code: 409, message: "A refresh is already running" }, 409)
-  const ids = body.ids?.filter((id) => typeof id === "string" && id.length > 0) ?? []
-  const result = ids.length ? await refreshFeedsByIds(ids) : await runFullRefreshSweep()
+  // An explicit empty selection must not unexpectedly refresh every subscription.
+  const result = Array.isArray(ids) ? await refreshFeedsByIds(ids) : await runFullRefreshSweep()
   return c.json(ok(result))
 })
 
@@ -763,9 +807,16 @@ app.post("/entries", async (c) => {
     publishedBefore?: string
     isCollection?: boolean
     withContent?: boolean
+    sortOrder?: "asc" | "desc"
   }>()
-  const clauses = ["s.user_id=?"]
+  const clauses = [body.isCollection ? "c.user_id=?" : "s.user_id=?"]
   const values: DBValue[] = [c.get("userId")]
+  const sortOrder = body.sortOrder === "asc" ? "ASC" : "DESC"
+  const cursorValue = sortOrder === "ASC" ? body.publishedBefore : body.publishedAfter
+  const cursorSeparator = cursorValue?.lastIndexOf("|") ?? -1
+  const cursorTime = cursorSeparator > 0 ? cursorValue!.slice(0, cursorSeparator) : cursorValue
+  const cursorId = cursorSeparator > 0 ? cursorValue!.slice(cursorSeparator + 1) : null
+  const cursorColumn = body.isCollection ? "c.created_at" : "e.published_at"
   if (body.feedId) {
     clauses.push("e.feed_id=?")
     values.push(body.feedId)
@@ -775,21 +826,26 @@ app.post("/entries", async (c) => {
     values.push(...body.feedIdList)
   }
   if (body.view !== undefined) {
-    clauses.push("s.view=?")
+    clauses.push(body.isCollection ? "c.view=?" : "s.view=?")
     values.push(body.view)
   }
   if (body.read !== undefined)
     clauses.push(body.read ? "r.entry_id IS NOT NULL" : "r.entry_id IS NULL")
   if (body.isCollection) clauses.push("c.entry_id IS NOT NULL")
-  if (body.publishedAfter) {
-    clauses.push("e.published_at < ?")
-    values.push(body.publishedAfter)
+  if (cursorTime) {
+    const comparison = sortOrder === "ASC" ? ">" : "<"
+    if (cursorId) {
+      clauses.push(
+        `(${cursorColumn} ${comparison} ? OR (${cursorColumn} = ? AND e.id ${comparison} ?))`,
+      )
+      values.push(cursorTime, cursorTime, cursorId)
+    } else {
+      clauses.push(`${cursorColumn} ${comparison} ?`)
+      values.push(cursorTime)
+    }
   }
-  if (body.publishedBefore) {
-    clauses.push("e.published_at > ?")
-    values.push(body.publishedBefore)
-  }
-  values.push(Math.min(body.limit ?? 20, 100))
+  const requestedLimit = Number.isInteger(body.limit) ? body.limit! : 20
+  values.push(Math.max(1, Math.min(requestedLimit, 100)))
   const rows = db
     .prepare(
       `SELECT e.*, r.entry_id read_id, c.created_at collection_created,
@@ -799,13 +855,21 @@ app.post("/entries", async (c) => {
     f.updates_per_week f_updates_per_week,f.latest_entry_published_at f_latest_entry_published_at,
     f.last_refreshed_at f_last_refreshed_at,
     e.id entry_id,e.url entry_url,e.title entry_title,e.description entry_description,e.feed_id entry_feed_id
-    FROM entries e JOIN feeds f ON f.id=e.feed_id JOIN subscriptions s ON s.feed_id=e.feed_id
-    LEFT JOIN reads r ON r.entry_id=e.id AND r.user_id=s.user_id LEFT JOIN collections c ON c.entry_id=e.id AND c.user_id=s.user_id
-    WHERE ${clauses.join(" AND ")} ORDER BY e.published_at ${body.publishedBefore ? "ASC" : "DESC"} LIMIT ?`,
+    FROM entries e JOIN feeds f ON f.id=e.feed_id
+    ${
+      body.isCollection
+        ? "JOIN collections c ON c.entry_id=e.id LEFT JOIN subscriptions s ON s.feed_id=e.feed_id AND s.user_id=c.user_id LEFT JOIN reads r ON r.entry_id=e.id AND r.user_id=c.user_id"
+        : "JOIN subscriptions s ON s.feed_id=e.feed_id LEFT JOIN reads r ON r.entry_id=e.id AND r.user_id=s.user_id LEFT JOIN collections c ON c.entry_id=e.id AND c.user_id=s.user_id"
+    }
+    WHERE ${clauses.join(" AND ")} ORDER BY ${cursorColumn} ${sortOrder}, e.id ${sortOrder} LIMIT ?`,
     )
     .all(...values) as Record<string, unknown>[]
-  return c.json(
-    ok(
+  const lastRow = rows.at(-1)
+  return c.json({
+    nextCursor: lastRow
+      ? `${body.isCollection ? lastRow.collection_created : lastRow.published_at}|${lastRow.entry_id}`
+      : null,
+    ...ok(
       rows.map((row) => {
         const entry = entryFromRow({
           ...row,
@@ -827,7 +891,7 @@ app.post("/entries", async (c) => {
         }
       }),
     ),
-  )
+  })
 })
 
 app.get("/entries", (c) => {
@@ -902,9 +966,18 @@ app.delete("/reads", async (c) => {
   return c.json(ok(null))
 })
 app.post("/reads/all", async (c) => {
-  const body = await c.req.json<{ feedId?: string; feedIdList?: string[]; view?: number }>()
+  const body = await c.req.json<{
+    feedId?: string
+    feedIdList?: string[]
+    view?: number
+    startTime?: number
+    endTime?: number
+    insertedBefore?: number
+    excludePrivate?: boolean
+  }>()
   const clauses = ["s.user_id=?"]
   const values: DBValue[] = [c.get("userId")]
+  const explicitlyScopedFeeds = Boolean(body.feedId || body.feedIdList?.length)
   if (body.feedId) {
     clauses.push("e.feed_id=?")
     values.push(body.feedId)
@@ -917,6 +990,20 @@ app.post("/reads/all", async (c) => {
     clauses.push("s.view=?")
     values.push(body.view)
   }
+  if (body.excludePrivate) clauses.push("s.is_private=0")
+  if (!explicitlyScopedFeeds) clauses.push("COALESCE(s.hide_from_timeline,0)=0")
+  if (Number.isFinite(body.startTime)) {
+    clauses.push("e.published_at>=?")
+    values.push(new Date(body.startTime!).toISOString())
+  }
+  if (Number.isFinite(body.endTime)) {
+    clauses.push("e.published_at<=?")
+    values.push(new Date(body.endTime!).toISOString())
+  }
+  if (Number.isFinite(body.insertedBefore)) {
+    clauses.push("e.inserted_at<?")
+    values.push(new Date(body.insertedBefore!).toISOString())
+  }
   const rows = db
     .prepare(
       `SELECT e.id,e.feed_id FROM entries e JOIN subscriptions s ON s.feed_id=e.feed_id WHERE ${clauses.join(" AND ")}`,
@@ -924,9 +1011,10 @@ app.post("/reads/all", async (c) => {
     .all(...values) as { id: string; feed_id: string }[]
   const stmt = db.prepare("INSERT OR IGNORE INTO reads VALUES (?,?,?)")
   const counts: Record<string, number> = {}
+  const readAt = new Date().toISOString()
   db.transaction(() =>
     rows.forEach((row) => {
-      if (stmt.run(c.get("userId"), row.id, new Date().toISOString()).changes)
+      if (stmt.run(c.get("userId"), row.id, readAt).changes)
         counts[row.feed_id] = (counts[row.feed_id] ?? 0) + 1
     }),
   )()
@@ -971,42 +1059,48 @@ app.post("/subscriptions/parse-opml", async (c) => {
   }
 })
 
-/**
- * The desktop client posts multipart form data with the selected feed URLs in `items`. Only that
- * field is needed: the OPML file itself was already parsed client-side for the preview step.
- */
-const readImportedUrls = async (request: Request): Promise<string[]> => {
-  const contentType = request.headers.get("content-type") ?? ""
-  try {
-    const form = await request.clone().formData()
-    const items = form.get("items")
-    if (typeof items === "string") return JSON.parse(items) as string[]
-  } catch {
-    // Fall through to the raw-body parse below.
-  }
-  if (!contentType.includes("form-data")) return []
-  const raw = await request.text()
-  const match = /name="items"\r?\n\r?\n([\s\S]*?)\r?\n--/.exec(raw)
-  if (!match?.[1]) return []
-  try {
-    return JSON.parse(match[1]) as string[]
-  } catch {
-    return []
-  }
+/** The client sends selected URLs plus the original OPML file containing their metadata. */
+const readImportedSubscriptions = async (
+  request: Request,
+  userId: string,
+): Promise<ParsedSubscription[]> => {
+  const form = await request.formData()
+  const items = form.get("items")
+  const selected: unknown = typeof items === "string" ? JSON.parse(items) : null
+  if (!Array.isArray(selected) || selected.some((url) => typeof url !== "string" || !url.trim()))
+    throw new Error("items must be an array of nonempty feed URLs")
+  const urls = [...new Set((selected as string[]).map((url) => url.trim()))]
+  const file = form.get("file")
+  if (file === null)
+    return urls.map((url) => ({ userId, url, view: 0, category: null, title: null }))
+  const content = typeof file === "string" ? file : await file.text()
+  const parsed = new Map(parseOpml(content, userId).subscriptions.map((item) => [item.url, item]))
+  return urls.map((url) => {
+    const subscription = parsed.get(url)
+    if (!subscription) throw new Error("Selected URL is not present in the OPML file")
+    return subscription
+  })
 }
 
 app.post("/subscriptions/import", async (c) => {
-  const urls = (await readImportedUrls(c.req.raw)).filter(
-    (url) => typeof url === "string" && url.trim(),
-  )
-  if (urls.length === 0) return c.json({ code: 400, message: "No feed URLs provided" }, 400)
+  let subscriptions: ParsedSubscription[]
+  try {
+    subscriptions = await readImportedSubscriptions(c.req.raw, c.get("userId"))
+  } catch (error) {
+    return c.json(
+      { code: 400, message: error instanceof Error ? error.message : "Invalid OPML import" },
+      400,
+    )
+  }
+  if (subscriptions.length === 0)
+    return c.json({ code: 400, message: "No feed URLs provided" }, 400)
 
   const successfulItems: { id: string; url: string; title: string | null }[] = []
   const conflictItems: { id: string; url: string; title: string | null }[] = []
   const parsedErrorItems: { url: string; title: null }[] = []
   const userId = c.get("userId")
 
-  for (const url of urls) {
+  for (const { url, view, category, title } of subscriptions) {
     const existing = db
       .prepare(
         "SELECT f.id FROM feeds f JOIN subscriptions s ON s.feed_id=f.id WHERE s.user_id=? AND f.url=?",
@@ -1019,8 +1113,8 @@ app.post("/subscriptions/import", async (c) => {
     try {
       const { feed } = await refreshFeed(url)
       db.prepare(
-        `INSERT INTO subscriptions VALUES (?, ?, ?, 0, NULL, NULL, 0, NULL, ?) ON CONFLICT(user_id,feed_id) DO NOTHING`,
-      ).run(crypto.randomUUID(), userId, feed.id, new Date().toISOString())
+        `INSERT INTO subscriptions VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?) ON CONFLICT(user_id,feed_id) DO NOTHING`,
+      ).run(crypto.randomUUID(), userId, feed.id, view, category, title, new Date().toISOString())
       db.prepare(
         "UPDATE feeds SET subscription_count=(SELECT COUNT(*) FROM subscriptions WHERE feed_id=?) WHERE id=?",
       ).run(feed.id, feed.id)
@@ -1037,7 +1131,7 @@ app.get("/subscriptions/export", (c) => {
   const folderMode = c.req.query("folderMode") === "category" ? "category" : "view"
   const entries = db
     .prepare(
-      `SELECT f.title f_title, f.url f_url, f.site_url f_site_url, s.category s_category, s.view s_view
+      `SELECT COALESCE(s.title,f.title) f_title, f.url f_url, f.site_url f_site_url, s.category s_category, s.view s_view
       FROM subscriptions s JOIN feeds f ON f.id=s.feed_id WHERE s.user_id=? ORDER BY s.created_at DESC`,
     )
     .all(c.get("userId")) as Record<string, unknown>[]

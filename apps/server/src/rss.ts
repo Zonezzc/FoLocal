@@ -6,8 +6,6 @@ import { db } from "./db.js"
 import {
   candidateInstances,
   getRouteAffinity,
-  getRSSHubBaseURL,
-  preferredInstanceURL,
   recordInstanceFailure,
   recordInstanceSuccess,
   routeFromURL,
@@ -52,6 +50,83 @@ const emptyFeed = (id: string, url: string): Feed => ({
 })
 
 export { emptyFeed }
+
+type XMLNode = Record<string, unknown>
+const nodes = (value: unknown): XMLNode[] =>
+  array(value).filter(
+    (item): item is XMLNode => Boolean(item) && typeof item === "object" && !Array.isArray(item),
+  )
+
+const resourceURL = (value: unknown, baseURL: string): string | null => {
+  const valueText = text(value)
+  if (!valueText) return null
+  try {
+    const url = new URL(valueText, baseURL)
+    return ["http:", "https:"].includes(url.protocol) ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+const durationSeconds = (value: unknown): number | undefined => {
+  const raw = text(value)
+  if (!raw || !/^\d+(?:\.\d+)?(?::\d+(?:\.\d+)?){0,2}$/.test(raw)) return
+  const seconds = raw.split(":").reduce((total, part) => total * 60 + Number(part), 0)
+  return Number.isFinite(seconds) ? seconds : undefined
+}
+
+const entryResources = (item: XMLNode, baseURL: string) => {
+  const attachments = new Map<
+    string,
+    { url: string; mime_type: string; duration_in_seconds?: number }
+  >()
+  const media = new Map<
+    string,
+    { url: string; type: "photo" | "video"; preview_image_url?: string }
+  >()
+  const groups = nodes(item["media:group"])
+  const thumbnails = [
+    ...nodes(item["media:thumbnail"]),
+    ...groups.flatMap((group) => nodes(group["media:thumbnail"])),
+  ]
+  const preview = thumbnails.map((node) => resourceURL(node["@_url"], baseURL)).find(Boolean)
+  const resources = [
+    ...nodes(item.enclosure),
+    ...nodes(item.link).filter((link) => link["@_rel"] === "enclosure"),
+    ...nodes(item["media:content"]),
+    ...groups.flatMap((group) => nodes(group["media:content"])),
+  ]
+  for (const node of resources) {
+    const url = resourceURL(node["@_url"] ?? node["@_href"], baseURL)
+    if (!url) continue
+    const existing = attachments.get(url)
+    const declaredMime = text(node["@_type"])?.trim().toLowerCase()
+    const mime =
+      declaredMime && declaredMime !== "application/octet-stream"
+        ? declaredMime
+        : (existing?.mime_type ?? "application/octet-stream")
+    const duration =
+      durationSeconds(node["@_duration"] ?? item["itunes:duration"]) ??
+      existing?.duration_in_seconds
+    attachments.set(url, {
+      url,
+      mime_type: mime,
+      ...(duration === undefined ? {} : { duration_in_seconds: duration }),
+    })
+    if (mime.startsWith("image/") || node["@_medium"] === "image")
+      media.set(url, { url, type: "photo" })
+    else if (mime.startsWith("video/") || node["@_medium"] === "video")
+      media.set(url, { url, type: "video", ...(preview ? { preview_image_url: preview } : {}) })
+  }
+  for (const thumbnail of thumbnails) {
+    const url = resourceURL(thumbnail["@_url"], baseURL)
+    if (url && !media.has(url)) media.set(url, { url, type: "photo" })
+  }
+  return {
+    attachments: attachments.size ? JSON.stringify([...attachments.values()]) : null,
+    media: media.size ? JSON.stringify([...media.values()]) : null,
+  }
+}
 
 const knownFeedFallbacks = new Map<string, string[]>([
   [
@@ -109,9 +184,8 @@ const feedCandidates = (route: string): FeedCandidate[] => {
   const candidates: FeedCandidate[] = candidateInstances(route)
     .slice(0, MAX_INSTANCE_ATTEMPTS)
     .map((instance) => ({ url: `${instance}${route}`, instanceUrl: instance }))
-  // Every instance disabled: still try the configured one rather than give up on the route.
   if (candidates.length === 0)
-    candidates.push({ url: `${getRSSHubBaseURL()}${route}`, instanceUrl: preferredInstanceURL() })
+    throw new Error("No enabled RSSHub instances are available for this route")
   return candidates
 }
 
@@ -193,6 +267,7 @@ const fetchFeedDocument = async (requestedUrl: string, validators: FeedValidator
           contentUrl: identity ?? candidate.url,
           rssChannel,
           notModified: false as const,
+          documentUrl: response.url || candidate.url,
           etag: response.headers.get("etag"),
           lastModified: response.headers.get("last-modified"),
           instanceUrl,
@@ -316,8 +391,14 @@ export const refreshFeed = async (
   let latest: string | null = null
   const insert =
     db.prepare(`INSERT INTO entries (id,feed_id,title,url,content,description,guid,author,inserted_at,published_at,media,categories,attachments,extra,language)
-    VALUES (@id,@feedId,@title,@url,@content,@description,@guid,@author,@insertedAt,@publishedAt,NULL,@categories,NULL,NULL,NULL)
-    ON CONFLICT(id) DO UPDATE SET title=excluded.title,url=excluded.url,content=excluded.content,description=excluded.description,author=excluded.author,published_at=excluded.published_at,categories=excluded.categories`)
+    VALUES (@id,@feedId,@title,@url,@content,@description,@guid,@author,@insertedAt,@publishedAt,@media,@categories,@attachments,NULL,NULL)
+    ON CONFLICT(id) DO UPDATE SET title=excluded.title,url=excluded.url,content=excluded.content,description=excluded.description,author=excluded.author,published_at=excluded.published_at,categories=excluded.categories,media=COALESCE(excluded.media,entries.media),attachments=COALESCE(excluded.attachments,entries.attachments)`)
+  const existingEntryByGuid = db.prepare(
+    `SELECT e.id FROM entries e WHERE e.feed_id=? AND e.guid=?
+    ORDER BY EXISTS(SELECT 1 FROM reads r WHERE r.entry_id=e.id) DESC,
+      EXISTS(SELECT 1 FROM collections c WHERE c.entry_id=e.id) DESC,
+      e.inserted_at ASC LIMIT 1`,
+  )
   db.transaction(() => {
     for (const item of items) {
       const links = array(
@@ -327,6 +408,7 @@ export const refreshFeed = async (
         text(item.link) ??
         text(links.find((link) => !link["@_rel"] || link["@_rel"] === "alternate")?.["@_href"])
       const guid = text(item.guid ?? item.id) ?? itemUrl ?? randomUUID()
+      const existingEntry = existingEntryByGuid.get(feedId, guid) as { id: string } | undefined
       const rawDate = text(item.pubDate ?? item.published ?? item.updated)
       const publishedAt =
         rawDate && !Number.isNaN(Date.parse(rawDate)) ? new Date(rawDate).toISOString() : now
@@ -335,7 +417,7 @@ export const refreshFeed = async (
         .map((category) => text(category))
         .filter((category): category is string => Boolean(category))
       insert.run({
-        id: stableId("entry", `${feedId}:${guid}`),
+        id: existingEntry?.id ?? stableId("entry", `${feedId}:${guid}`),
         feedId,
         title: text(item.title),
         url: itemUrl,
@@ -346,6 +428,7 @@ export const refreshFeed = async (
         insertedAt: now,
         publishedAt,
         categories: categories.length ? JSON.stringify(categories) : null,
+        ...entryResources(item, result.documentUrl),
       })
     }
   })()

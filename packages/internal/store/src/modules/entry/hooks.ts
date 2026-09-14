@@ -131,6 +131,11 @@ export const useEntriesQuery = (
     getNextPageParam: (lastPage) => {
       if (aiSort) return
 
+      // Local APIs provide an opaque tie-breaking cursor. Keep timestamp pagination for
+      // hosted APIs used by other platforms, which do not accept the local cursor format.
+      if ("nextCursor" in lastPage) {
+        return typeof lastPage.nextCursor === "string" ? lastPage.nextCursor : undefined
+      }
       const lastEntry = lastPage.data?.at(-1)
       return isCollectionQuery
         ? (toPageParam(lastEntry?.collections?.createdAt) ??

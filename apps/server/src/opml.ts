@@ -72,7 +72,17 @@ export const parseOpml = (
       if (xmlUrl) {
         if (!seen.has(xmlUrl)) {
           seen.add(xmlUrl)
-          subscriptions.push({ userId, url: xmlUrl, view: 0, category, title: label })
+          const storedView = Number(node["@_folocal-view"])
+          const view =
+            Number.isInteger(storedView) && storedView >= 0 && storedView <= 4 ? storedView : 0
+          const storedCategory = text(node["@_folocal-category"])
+          subscriptions.push({
+            userId,
+            url: xmlUrl,
+            view,
+            category: storedCategory === null ? category : storedCategory || null,
+            title: label,
+          })
         }
       } else if (children && label) {
         // A folder: its children inherit the folder name as their category.
@@ -86,7 +96,9 @@ export const parseOpml = (
   walk(body.outline, null)
   if (subscriptions.length === 0)
     throw new Error("Not a valid OPML document: no feed outlines found")
-  return { subscriptions, remaining: 0 }
+  // The renderer treats remaining as the number of subscriptions it may import. Local mode
+  // has no account quota; every parsed subscription is eligible for selection.
+  return { subscriptions, remaining: subscriptions.length }
 }
 
 export const buildOpml = (
@@ -115,6 +127,8 @@ export const buildOpml = (
             `title="${escapeXml(item.title ?? item.url)}"`,
             `type="rss"`,
             `xmlUrl="${escapeXml(item.url)}"`,
+            `folocal-view="${item.view}"`,
+            `folocal-category="${escapeXml(item.category ?? "")}"`,
           ]
           if (item.siteUrl) attributes.push(`htmlUrl="${escapeXml(item.siteUrl)}"`)
           if (options.rsshubUrl)

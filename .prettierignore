@@ -16,3 +16,6 @@ apps/mobile/native/ios
 apps/mobile/.expo
 
 generated-routes.ts
+
+# Local verification logs, fixtures and generated reports.
+outputs/

@@ -96,7 +96,10 @@ const instanceRow = (url: string) =>
   db.prepare("SELECT * FROM rsshub_instances WHERE url=?").get(url) as
     Record<string, unknown> | undefined
 
-const isUsable = (url: string) => instanceRow(url)?.enabled !== 0
+const isUsable = (url: string) => {
+  const row = instanceRow(url)
+  return row ? row.enabled === 1 : true
+}
 
 const enabledInstances = () =>
   (
@@ -189,8 +192,24 @@ export const routeFromURL = (url: URL): string | null => {
   }
   if (!["http:", "https:"].includes(url.protocol)) return null
   if (!isInstanceHost(url.host)) return null
-  const route = `${url.pathname}${url.search}`
-  return route.replace(/\/+$/, "").length <= 1 ? null : route
+  const known = db.prepare("SELECT url FROM rsshub_instances").all() as { url: string }[]
+  const bases = [...DEFAULT_INSTANCES, ...known.map((row) => row.url)]
+  const preferred = preferredInstanceURL()
+  if (preferred) bases.push(preferred)
+  // Match the longest path prefix on a segment boundary, not just the host. A reverse proxy
+  // can host both RSSHub under /rsshub and unrelated feeds elsewhere on the same origin.
+  const base = bases
+    .map((value) => new URL(value))
+    .filter((candidate) => {
+      if (candidate.origin !== url.origin) return false
+      const prefix = candidate.pathname.replace(/\/+$/, "")
+      return url.pathname === prefix || url.pathname.startsWith(`${prefix}/`)
+    })
+    .sort((a, b) => b.pathname.length - a.pathname.length)[0]
+  if (!base) return null
+  const pathname = url.pathname.slice(base.pathname.replace(/\/+$/, "").length)
+  if (!pathname.replace(/\/+$/, "")) return null
+  return `${pathname}${url.search}`
 }
 
 /** Routes worth probing: the ones the user actually subscribes to. */
@@ -260,7 +279,7 @@ export const recordInstanceFailure = (url: string, message: string) => {
 export const candidateInstances = (route: string): string[] => {
   const urls: string[] = []
   const push = (url: string | null | undefined) => {
-    if (url && !urls.includes(url)) urls.push(url)
+    if (url && isUsable(url) && !urls.includes(url)) urls.push(url)
   }
   push(preferredInstanceURL())
   push(getRouteAffinity(route))

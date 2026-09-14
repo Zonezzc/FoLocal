@@ -1,14 +1,15 @@
-import { DEV, MICROSOFT_STORE_BUILD, MODE, ModeEnum } from "@follow/shared/constants"
+import { MICROSOFT_STORE_BUILD } from "@follow/shared/constants"
 
 const isStoreDistribution = Boolean(process.mas || MICROSOFT_STORE_BUILD)
 
 export const appUpdaterConfig = {
-  // Disable renderer hot update will trigger app update when available
-  enableRenderHotUpdate: !DEV && MODE !== ModeEnum.staging,
+  // Also reject cached official renderers at startup, not only new OTA downloads.
+  enableRenderHotUpdate: false,
   enableCoreUpdate: !isStoreDistribution,
 
-  // Disable app update will also disable renderer hot update and core update
-  enableAppUpdate: true,
+  // FoLocal is distributed from a separate repository and must never consume the official OTA
+  // channel. Re-enable this only after the fork owns and validates an independent update service.
+  enableAppUpdate: false,
   enableDistributionStoreUpdate: isStoreDistribution,
 
   app: {

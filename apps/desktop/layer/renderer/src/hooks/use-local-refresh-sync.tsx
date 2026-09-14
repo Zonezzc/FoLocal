@@ -12,21 +12,23 @@ import { invalidateAfterRefresh, useRefreshStatusQuery } from "~/queries/feed"
 export const LocalRefreshSync = () => {
   const queryClient = useQueryClient()
   const { data } = useRefreshStatusQuery()
-  const lastHandledRef = useRef<string | null>(null)
+  const lastHandledRef = useRef<string | null | undefined>(undefined)
+  const finishedAt = data === undefined ? undefined : (data.lastRun?.finishedAt ?? null)
 
   useEffect(() => {
-    const finishedAt = data?.lastRun?.finishedAt ?? null
-    if (!finishedAt) return
-    if (lastHandledRef.current === null) {
-      // First observation only records the baseline; it must not trigger a refetch on mount.
+    if (finishedAt === undefined) return
+    if (lastHandledRef.current === undefined) {
+      // The first valid status establishes the baseline, including no completed run.
       lastHandledRef.current = finishedAt
       return
     }
-    if (lastHandledRef.current === finishedAt) return
+    if (!finishedAt || lastHandledRef.current === finishedAt) return
     lastHandledRef.current = finishedAt
     appLog(`Background refresh finished, invalidating entries (${finishedAt})`)
-    void invalidateAfterRefresh(queryClient)
-  }, [data?.lastRun?.finishedAt, queryClient])
+    void invalidateAfterRefresh(queryClient).catch((error) => {
+      appLog("Background refresh invalidation failed", error)
+    })
+  }, [finishedAt, queryClient])
 
   return null
 }

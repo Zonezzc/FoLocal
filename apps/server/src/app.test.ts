@@ -140,6 +140,217 @@ describe("local data service", () => {
     })
   })
 
+  it("applies time and subscription visibility filters when marking entries as read", async () => {
+    const insertedAt = "2026-01-01T00:00:00.000Z"
+    const insertFeed = db.prepare(
+      "INSERT INTO feeds (id,url,title,subscription_count,updated_at) VALUES (?,?,?,?,?)",
+    )
+    const insertSubscription = db.prepare(
+      "INSERT INTO subscriptions (id,user_id,feed_id,view,is_private,hide_from_timeline,created_at) VALUES (?,?,?,?,?,?,?)",
+    )
+    const insertEntry = db.prepare(
+      "INSERT INTO entries (id,feed_id,title,guid,inserted_at,published_at) VALUES (?,?,?,?,?,?)",
+    )
+    insertFeed.run("read-scope", "https://read-scope.test/rss", "Read scope", 1, insertedAt)
+    insertFeed.run("read-private", "https://read-private.test/rss", "Private", 1, insertedAt)
+    insertFeed.run("read-hidden", "https://read-hidden.test/rss", "Hidden", 1, insertedAt)
+    insertSubscription.run("sub-read-scope", "local-user", "read-scope", 0, 0, 0, insertedAt)
+    insertSubscription.run("sub-read-private", "local-user", "read-private", 0, 1, 0, insertedAt)
+    insertSubscription.run("sub-read-hidden", "local-user", "read-hidden", 0, 0, 1, insertedAt)
+    insertEntry.run(
+      "read-old",
+      "read-scope",
+      "Old",
+      "read-old",
+      insertedAt,
+      "2026-01-10T00:00:00.000Z",
+    )
+    insertEntry.run(
+      "read-new",
+      "read-scope",
+      "New",
+      "read-new",
+      insertedAt,
+      "2026-02-10T00:00:00.000Z",
+    )
+    insertEntry.run(
+      "read-private-entry",
+      "read-private",
+      "Private",
+      "read-private",
+      insertedAt,
+      insertedAt,
+    )
+    insertEntry.run(
+      "read-hidden-entry",
+      "read-hidden",
+      "Hidden",
+      "read-hidden",
+      insertedAt,
+      insertedAt,
+    )
+
+    try {
+      const scoped = await app.request("/reads/all", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          feedId: "read-scope",
+          startTime: Date.parse("2026-01-01T00:00:00.000Z"),
+          endTime: Date.parse("2026-01-31T23:59:59.999Z"),
+        }),
+      })
+      expect(await scoped.json()).toEqual({ code: 0, data: { read: { "read-scope": 1 } } })
+      expect(
+        db
+          .prepare("SELECT entry_id FROM reads WHERE entry_id LIKE 'read-%' ORDER BY entry_id")
+          .all(),
+      ).toEqual([{ entry_id: "read-old" }])
+
+      const visibleOnly = await app.request("/reads/all", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ view: 0, excludePrivate: true }),
+      })
+      expect(await visibleOnly.json()).toEqual({ code: 0, data: { read: { "read-scope": 1 } } })
+      expect(
+        db
+          .prepare("SELECT entry_id FROM reads WHERE entry_id LIKE 'read-%' ORDER BY entry_id")
+          .all(),
+      ).toEqual([{ entry_id: "read-new" }, { entry_id: "read-old" }])
+    } finally {
+      db.prepare("DELETE FROM reads WHERE entry_id LIKE 'read-%'").run()
+      db.prepare(
+        "DELETE FROM entries WHERE feed_id IN ('read-scope','read-private','read-hidden')",
+      ).run()
+      db.prepare(
+        "DELETE FROM subscriptions WHERE feed_id IN ('read-scope','read-private','read-hidden')",
+      ).run()
+      db.prepare("DELETE FROM feeds WHERE id IN ('read-scope','read-private','read-hidden')").run()
+    }
+  })
+
+  it("preserves an imported entry identity when the same feed guid is refreshed", async () => {
+    const now = new Date().toISOString()
+    db.prepare(
+      "INSERT INTO feeds (id,url,title,subscription_count,updated_at) VALUES (?,?,?,?,?)",
+    ).run("identity-feed", "https://identity.test/rss", "Identity", 1, now)
+    db.prepare(
+      "INSERT INTO subscriptions (id,user_id,feed_id,view,is_private,created_at) VALUES (?,?,?,?,?,?)",
+    ).run("identity-sub", "local-user", "identity-feed", 0, 0, now)
+    db.prepare(
+      "INSERT INTO entries (id,feed_id,title,content,guid,inserted_at,published_at) VALUES (?,?,?,?,?,?,?)",
+    ).run("imported-entry-id", "identity-feed", "Imported", "Old", "stable-guid", now, now)
+    db.prepare("INSERT INTO reads VALUES (?,?,?)").run("local-user", "imported-entry-id", now)
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response(
+            '<rss version="2.0"><channel><title>Identity</title><item><guid>stable-guid</guid><title>Refreshed</title><description>New</description></item></channel></rss>',
+          ),
+        ),
+    )
+    try {
+      const response = await app.request("/feeds/refresh?id=identity-feed&conditional=0")
+      expect(response.status).toBe(200)
+      expect(
+        db.prepare("SELECT id,title FROM entries WHERE feed_id=?").all("identity-feed"),
+      ).toEqual([{ id: "imported-entry-id", title: "Refreshed" }])
+      expect(
+        db.prepare("SELECT entry_id FROM reads WHERE entry_id=?").get("imported-entry-id"),
+      ).toEqual({ entry_id: "imported-entry-id" })
+    } finally {
+      vi.unstubAllGlobals()
+      db.prepare("DELETE FROM reads WHERE entry_id='imported-entry-id'").run()
+      db.prepare("DELETE FROM entries WHERE feed_id='identity-feed'").run()
+      db.prepare("DELETE FROM subscriptions WHERE feed_id='identity-feed'").run()
+      db.prepare("DELETE FROM feeds WHERE id='identity-feed'").run()
+    }
+  })
+
+  it("uses a stable compound cursor and honors ascending entry order", async () => {
+    const now = new Date().toISOString()
+    const publishedAt = "2026-03-01T00:00:00.000Z"
+    db.prepare(
+      "INSERT INTO feeds (id,url,title,subscription_count,updated_at) VALUES (?,?,?,?,?)",
+    ).run("cursor-feed", "https://cursor.test/rss", "Cursor", 1, now)
+    db.prepare(
+      "INSERT INTO subscriptions (id,user_id,feed_id,view,is_private,created_at) VALUES (?,?,?,?,?,?)",
+    ).run("cursor-sub", "local-user", "cursor-feed", 0, 0, now)
+    const insert = db.prepare(
+      "INSERT INTO entries (id,feed_id,title,guid,inserted_at,published_at) VALUES (?,?,?,?,?,?)",
+    )
+    for (let index = 0; index < 25; index++) {
+      const id = `cursor-${String(index).padStart(2, "0")}`
+      insert.run(id, "cursor-feed", id, id, now, publishedAt)
+    }
+    try {
+      const list = async (body: Record<string, unknown>) => {
+        const response = await app.request("/entries", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ feedId: "cursor-feed", ...body }),
+        })
+        return (await response.json()).data as { entries: { id: string; publishedAt: string } }[]
+      }
+      const first = await list({ limit: 20 })
+      const cursor = `${first.at(-1)!.entries.publishedAt}|${first.at(-1)!.entries.id}`
+      const second = await list({ limit: 20, publishedAfter: cursor })
+      expect([...first, ...second].map((item) => item.entries.id)).toHaveLength(25)
+      expect(new Set([...first, ...second].map((item) => item.entries.id)).size).toBe(25)
+
+      const ascending = await list({ limit: 1, sortOrder: "asc" })
+      expect(ascending[0]!.entries.id).toBe("cursor-00")
+
+      const clamped = await list({ limit: -1 })
+      expect(clamped).toHaveLength(1)
+    } finally {
+      db.prepare("DELETE FROM entries WHERE feed_id='cursor-feed'").run()
+      db.prepare("DELETE FROM subscriptions WHERE feed_id='cursor-feed'").run()
+      db.prepare("DELETE FROM feeds WHERE id='cursor-feed'").run()
+    }
+  })
+
+  it("keeps collected entries visible after their feed is unsubscribed", async () => {
+    const now = new Date().toISOString()
+    db.prepare(
+      "INSERT INTO feeds (id,url,title,subscription_count,updated_at) VALUES (?,?,?,?,?)",
+    ).run("collected-feed", "https://collected.test/rss", "Collected", 1, now)
+    db.prepare(
+      "INSERT INTO subscriptions (id,user_id,feed_id,view,is_private,created_at) VALUES (?,?,?,?,?,?)",
+    ).run("collected-sub", "local-user", "collected-feed", 0, 0, now)
+    db.prepare(
+      "INSERT INTO entries (id,feed_id,title,guid,inserted_at,published_at) VALUES (?,?,?,?,?,?)",
+    ).run("collected-entry", "collected-feed", "Collected", "collected-entry", now, now)
+    db.prepare("INSERT INTO collections VALUES (?,?,?,?)").run(
+      "local-user",
+      "collected-entry",
+      0,
+      now,
+    )
+    db.prepare("DELETE FROM subscriptions WHERE feed_id='collected-feed'").run()
+    try {
+      const response = await app.request("/entries", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ isCollection: true, view: 0 }),
+      })
+      const payload = await response.json()
+      expect(payload.code).toBe(0)
+      expect(
+        payload.data.find(
+          (item: { entries: { id: string } }) => item.entries.id === "collected-entry",
+        ),
+      ).toMatchObject({ entries: { id: "collected-entry" }, collections: { createdAt: now } })
+    } finally {
+      db.prepare("DELETE FROM collections WHERE entry_id='collected-entry'").run()
+      db.prepare("DELETE FROM entries WHERE feed_id='collected-feed'").run()
+      db.prepare("DELETE FROM feeds WHERE id='collected-feed'").run()
+    }
+  })
+
   it("falls back to a compatible mirror when the WSJ feed blocks automated requests", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
@@ -591,6 +802,40 @@ describe("RSSHub instance pool", () => {
     } finally {
       vi.unstubAllGlobals()
       dropFeed(url)
+    }
+  })
+
+  it("does not try a preferred RSSHub instance after it is disabled", async () => {
+    const preferred = "https://preferred-disabled.test"
+    await app.request("/settings/rsshub", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseURL: preferred }),
+    })
+    await app.request("/settings/rsshub/instances", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: preferred, enabled: false }),
+    })
+    const requested: string[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockImplementation(async (input) => {
+        requested.push(String(input))
+        return new Response(rssDocument("Enabled fallback"))
+      }),
+    )
+    try {
+      const response = await app.request(
+        `/feeds?url=${encodeURIComponent("rsshub://audit/disabled")}`,
+      )
+      expect(response.status).toBe(200)
+      expect(requested[0]).not.toContain("preferred-disabled.test")
+    } finally {
+      vi.unstubAllGlobals()
+      dropFeed("rsshub://audit/disabled")
+      db.prepare("DELETE FROM rsshub_instances WHERE url=?").run(preferred)
+      db.prepare("DELETE FROM local_settings WHERE key='rsshub_base_url'").run()
     }
   })
 

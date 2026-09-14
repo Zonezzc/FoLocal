@@ -78,7 +78,7 @@ const markFailure = (feedId: string, error: unknown) => {
   )
 }
 
-export const refreshFeedsByIds = async (feedIds: string[]): Promise<RefreshRunResult> => {
+const refreshBatch = async (feedIds: string[]): Promise<RefreshRunResult> => {
   const startedAt = new Date().toISOString()
   let failed = 0
   let notModified = 0
@@ -114,7 +114,10 @@ export const refreshFeedsByIds = async (feedIds: string[]): Promise<RefreshRunRe
   }
 }
 
-export const refreshAllSubscribedFeeds = () => refreshFeedsByIds(subscribedFeedIds())
+export const refreshAllSubscribedFeeds = () => runRefreshSweep(subscribedFeedIds())
+
+/** Selected-feed requests share the same lock and completion status as scheduled sweeps. */
+export const refreshFeedsByIds = (feedIds: string[]) => runRefreshSweep(feedIds)
 
 /**
  * Single-flight wrapper: a sweep already in flight is returned instead of starting a second one,
@@ -122,7 +125,7 @@ export const refreshAllSubscribedFeeds = () => refreshFeedsByIds(subscribedFeedI
  */
 export const runRefreshSweep = (feedIds: string[]): Promise<RefreshRunResult> => {
   if (running) return running
-  const promise = refreshFeedsByIds(feedIds)
+  const promise = refreshBatch([...new Set(feedIds)])
     .then((result) => {
       lastRun = result
       return result
