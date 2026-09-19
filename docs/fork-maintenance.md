@@ -31,9 +31,17 @@ node scripts/upstream-sync.mjs --upstream=folo
 
 这是个人自用分支，不使用 PR 流程，也不向两个上游提交 PR。更新需在隔离的工作区验证兼容性；通过后直接提交到自己的仓库。`FoLocal Checks` 在推送时验证类型、lint、服务测试、隔离测试和 Electron 构建。存在冲突时报告冲突，等待处理；没有文本冲突也不代表功能兼容。
 
-定时检查不自动合并、发布或覆盖已安装的应用。官方 Folo 可能新增官方服务依赖、套餐判断或数据库变化，需要检查本地实现是否兼容。客户端自动下载安装更新暂未启用，避免覆盖本地数据和修复。
+官方 Folo 可能新增官方服务依赖、套餐判断或数据库变化，需要检查本地实现是否兼容。客户端自动下载安装更新暂未启用，避免覆盖本地数据和修复。
 
-Codex 任务的定时检查调用上述脚本，仅在上游有新变化或检查失败时通知，相同状态不重复提醒。这个定时任务依赖本机 Codex 自动化运行环境，单独克隆仓库不会继承该定时任务。也可手动执行脚本。继承的发布、部署等工作流已停用，仅启用自己的 `FoLocal Checks`。
+上游定时检查已取消；需要同步时手动执行上述脚本。继承的发布、部署等工作流已停用，仅启用自己的 `FoLocal Checks`。推送时运行代码检查，不检查上游更新。
+
+## GitHub 手动打包
+
+在本仓库 Actions → FoLocal Checks → Run workflow 选择 `dev`，保留 `package` 勾选。类型检查、lint、测试和构建通过后，使用 GitHub 的 macOS Apple Silicon 机器打包并验证签名。
+
+完成后下载该次运行的 `FoLocal-macos-arm64-<commit>` Artifact，内含 DMG、ZIP、源码提交标识和 SHA-256 校验文件，保存 30 天；需要长期保存时下载到本机。也可使用 `gh workflow run folocal-check.yml --repo Zonezzc/FoLocal --ref dev -f package=true` 触发。
+
+打包不创建 PR，不自动发布 Release，也不安装到本机。安装包采用 ad-hoc 签名，未经过 Apple 公证。个人数据库及 AI 配置留在本机，不上传到 GitHub。
 
 ## 发布前验证
 

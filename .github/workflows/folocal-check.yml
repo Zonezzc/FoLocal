@@ -4,6 +4,11 @@ on:
   push:
     branches: [dev, "sync/**"]
   workflow_dispatch:
+    inputs:
+      package:
+        description: Build a macOS Apple Silicon installer after checks pass
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -55,3 +60,35 @@ jobs:
           pnpm --filter @follow/web exec vitest run src/lib/local-icons.test.ts
       - name: Build Electron application
         run: pnpm --filter Folo build:electron-vite
+      - name: Package macOS Apple Silicon application
+        if: github.event_name == 'workflow_dispatch' && inputs.package
+        working-directory: apps/desktop
+        env:
+          OSX_SIGN_IDENTITY: "-"
+          BUILD_VERSION: ${{ github.run_number }}
+        run: |
+          test "$(uname -m)" = arm64
+          node ../../node_modules/@electron-forge/cli/dist/electron-forge.js package --platform=darwin --arch=arm64
+          test -d out/FoLocal-darwin-arm64/FoLocal.app
+          codesign --verify --deep --strict out/FoLocal-darwin-arm64/FoLocal.app
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' out/FoLocal-darwin-arm64/FoLocal.app/Contents/Info.plist)" = is.folocal.local
+      - name: Create installer and checksums
+        if: github.event_name == 'workflow_dispatch' && inputs.package
+        working-directory: apps/desktop
+        run: |
+          mkdir -p out/installer out/dmg-root
+          ditto out/FoLocal-darwin-arm64/FoLocal.app out/dmg-root/FoLocal.app
+          ln -s /Applications out/dmg-root/Applications
+          hdiutil create -volname FoLocal -srcfolder out/dmg-root -format UDZO "out/installer/FoLocal-macos-arm64-${GITHUB_SHA:0:12}.dmg"
+          ditto -c -k --sequesterRsrc --keepParent out/FoLocal-darwin-arm64/FoLocal.app "out/installer/FoLocal-macos-arm64-${GITHUB_SHA:0:12}.zip"
+          printf 'Repository: %s\nCommit: %s\nBuild: %s\nSigning: ad-hoc, not notarized\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_RUN_NUMBER" > out/installer/BUILD-INFO.txt
+          cd out/installer
+          shasum -a 256 *.dmg *.zip > SHA256SUMS.txt
+      - name: Upload installers
+        if: github.event_name == 'workflow_dispatch' && inputs.package
+        uses: actions/upload-artifact@v4
+        with:
+          name: FoLocal-macos-arm64-${{ github.sha }}
+          path: apps/desktop/out/installer/
+          if-no-files-found: error
+          retention-days: 30
