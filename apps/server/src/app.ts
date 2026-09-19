@@ -36,6 +36,7 @@ import {
   getRefreshIntervalMinutes,
   getRefreshStatus,
   isRefreshRunning,
+  refreshFeedById,
   refreshFeedsByIds,
   runFullRefreshSweep,
   setRefreshIntervalMinutes,
@@ -575,7 +576,7 @@ app.get("/feeds/refresh", async (c) => {
     { url: string } | undefined
   if (!row) return c.json({ code: 404, message: "Feed not found" }, 404)
   try {
-    const result = await refreshFeed(row.url, { conditional: c.req.query("conditional") !== "0" })
+    const result = await refreshFeedById(c.req.query("id")!)
     return c.json(ok({ notModified: result.notModified }))
   } catch (error) {
     db.prepare("UPDATE feeds SET error_at=?, error_message=? WHERE url=?").run(
@@ -601,7 +602,6 @@ app.post("/feeds/refresh", async (c) => {
     (!Array.isArray(ids) || ids.some((id) => typeof id !== "string" || !id.trim()))
   )
     return c.json({ code: 400, message: "ids must be an array of nonempty feed IDs" }, 400)
-  if (isRefreshRunning()) return c.json({ code: 409, message: "A refresh is already running" }, 409)
   // An explicit empty selection must not unexpectedly refresh every subscription.
   const result = Array.isArray(ids) ? await refreshFeedsByIds(ids) : await runFullRefreshSweep()
   return c.json(ok(result))
@@ -620,6 +620,45 @@ app.get("/local/refresh-status", (c) =>
 app.get("/settings/refresh", (c) =>
   c.json(ok({ intervalMinutes: getRefreshIntervalMinutes(), lastRun: getRefreshStatus() })),
 )
+
+app.get("/local/feed-health", (c) =>
+  c.json(
+    ok(
+      db
+        .prepare(
+          `
+  SELECT f.id, COALESCE(s.title,f.title,f.url) AS title, f.url,
+    f.error_at AS errorAt,f.error_message AS error,f.last_refreshed_at AS lastSuccess,
+    r.last_attempt_at AS lastAttempt,r.next_attempt_at AS nextAttempt,
+    COALESCE(r.failures,0) AS failures,COALESCE(r.paused,0) AS paused
+  FROM feeds f JOIN subscriptions s ON s.feed_id=f.id
+    LEFT JOIN feed_refresh_state r ON r.feed_id=f.id
+  WHERE s.user_id=? AND (f.error_at IS NOT NULL OR r.paused=1)
+  ORDER BY r.paused, f.error_at DESC
+`,
+        )
+        .all(c.get("userId")),
+    ),
+  ),
+)
+
+app.put("/local/feed-health/:id", async (c) => {
+  const id = c.req.param("id")
+  if (
+    !db
+      .prepare("SELECT 1 FROM subscriptions WHERE feed_id=? AND user_id=?")
+      .get(id, c.get("userId"))
+  )
+    return c.json({ code: 404, message: "Subscription not found" }, 404)
+  const body = await c.req.json<{ paused?: boolean }>()
+  if (typeof body.paused !== "boolean")
+    return c.json({ code: 400, message: "paused must be boolean" }, 400)
+  db.prepare(
+    `INSERT INTO feed_refresh_state(feed_id,paused) VALUES(?,?)
+    ON CONFLICT(feed_id) DO UPDATE SET paused=excluded.paused,next_attempt_at=NULL`,
+  ).run(id, Number(body.paused))
+  return c.json(ok({ saved: true }))
+})
 app.put("/settings/refresh", async (c) => {
   const body = await c.req.json<{ intervalMinutes?: number }>()
   try {
@@ -1205,5 +1244,6 @@ app.onError((error, c) => {
 })
 
 export { app }
+export { setNetworkFetch } from "./network.js"
 export { databasePath }
 export { getRefreshIntervalMinutes, getRefreshStatus, startRefreshScheduler, stopRefreshScheduler }

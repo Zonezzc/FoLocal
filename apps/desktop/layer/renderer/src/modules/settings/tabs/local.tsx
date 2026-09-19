@@ -15,6 +15,7 @@ import {
 } from "~/queries/feed"
 
 import { SettingSectionTitle } from "../section"
+import { LocalReliability } from "./local-reliability"
 import { SettingRsshubPool } from "./local-rsshub-pool"
 
 const INTERVAL_PRESETS = [15, 30, 60, 120, 240]
@@ -135,8 +136,11 @@ export const SettingLocalService = () => {
 
         <div className="flex items-center justify-between gap-4 border-t border-border pt-4">
           <p className="text-xs text-text-tertiary">
-            {refreshAll.isPending
-              ? t("local.refreshing")
+            {status?.running
+              ? t("local.refresh_progress", {
+                  completed: lastRun?.completed ?? 0,
+                  total: lastRun?.total ?? 0,
+                })
               : lastRun
                 ? t("local.last_run", {
                     time: new Date(lastRun.finishedAt).toLocaleString(),
@@ -189,6 +193,7 @@ export const SettingLocalService = () => {
 
       <SettingSectionTitle title={t("local.rsshub_pool")} />
       <SettingRsshubPool />
+      <LocalReliability />
 
       <SettingSectionTitle title={t("local.search")} />
       <p className="text-sm text-text-tertiary">{t("local.search_description")}</p>

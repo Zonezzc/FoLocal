@@ -71,5 +71,9 @@
   "menu.window": "ウィンドウ",
   "menu.zoom": "ズーム",
   "menu.zoomIn": "拡大",
-  "menu.zoomOut": "縮小"
+  "menu.zoomOut": "縮小",
+  "profile.cancel": "キャンセル",
+  "profile.restore": "復元して再起動",
+  "profile.restore_detail": "バックアップ：{{time}}\\n購読 {{count}} 件。現在のデータと設定を置き換える前に回復用バックアップを作成します。",
+  "profile.restore_title": "このバックアップを復元しますか？"
 }

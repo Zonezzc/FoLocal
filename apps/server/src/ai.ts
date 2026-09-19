@@ -2,6 +2,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 
 import { dirname } from "pathe"
 
+import { networkFetch } from "./network.js"
+
 export interface OpenAIConfig {
   apiKey?: string
   baseURL: string
@@ -73,7 +75,7 @@ export const requestCompletion = async (
   config: OpenAIConfig,
   messages: { role: string; content: string }[],
 ) => {
-  const response = await fetch(`${config.baseURL.replace(/\/$/, "")}/chat/completions`, {
+  const response = await networkFetch(`${config.baseURL.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       ...authorizationHeaders(config.apiKey),
@@ -95,7 +97,7 @@ export const complete = async (messages: { role: string; content: string }[]) =>
 export async function streamCompletion(messages: { role: string; content: string }[]) {
   const config = await requireConfig()
   const abort = new AbortController()
-  const response = await fetch(`${config.baseURL.replace(/\/$/, "")}/chat/completions`, {
+  const response = await networkFetch(`${config.baseURL.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: { ...authorizationHeaders(config.apiKey), "content-type": "application/json" },
     body: JSON.stringify({ model: config.model, messages, stream: true }),
@@ -165,7 +167,7 @@ export async function streamCompletion(messages: { role: string; content: string
 
 export const synthesizeSpeech = async (text: string, voice?: string) => {
   const config = await requireConfig()
-  const response = await fetch(`${config.baseURL.replace(/\/$/, "")}/audio/speech`, {
+  const response = await networkFetch(`${config.baseURL.replace(/\/$/, "")}/audio/speech`, {
     method: "POST",
     headers: {
       ...authorizationHeaders(config.apiKey),
@@ -185,13 +187,13 @@ export const synthesizeSpeech = async (text: string, voice?: string) => {
 
 export const transcribeAudio = async (url: string) => {
   const config = await requireConfig()
-  const audioResponse = await fetch(url, { signal: AbortSignal.timeout(120_000) })
+  const audioResponse = await networkFetch(url, { signal: AbortSignal.timeout(120_000) })
   if (!audioResponse.ok) throw new Error(`Unable to download audio (${audioResponse.status})`)
   const form = new FormData()
   form.append("file", await audioResponse.blob(), "audio.mp3")
   form.append("model", config.transcriptionModel || "whisper-1")
   form.append("response_format", "srt")
-  const response = await fetch(`${config.baseURL.replace(/\/$/, "")}/audio/transcriptions`, {
+  const response = await networkFetch(`${config.baseURL.replace(/\/$/, "")}/audio/transcriptions`, {
     method: "POST",
     headers: authorizationHeaders(config.apiKey),
     body: form,
@@ -210,7 +212,7 @@ export const testOpenAIConfig = async (config: OpenAIConfig) => {
 }
 
 export const listOpenAIModels = async (config: Pick<OpenAIConfig, "apiKey" | "baseURL">) => {
-  const response = await fetch(`${config.baseURL.replace(/\/$/, "")}/models`, {
+  const response = await networkFetch(`${config.baseURL.replace(/\/$/, "")}/models`, {
     headers: authorizationHeaders(config.apiKey),
     signal: AbortSignal.timeout(30_000),
   })

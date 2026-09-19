@@ -4,6 +4,7 @@ import { XMLParser } from "fast-xml-parser"
 
 import { db } from "./db.js"
 import { normalizeFeedImage } from "./feed-image.js"
+import { describeNetworkError, networkFetch } from "./network.js"
 import {
   candidateInstances,
   getRouteAffinity,
@@ -162,7 +163,7 @@ const fetchWithValidators = async (url: string, validators: FeedValidators, time
   }
   if (validators.etag) headers["if-none-match"] = validators.etag
   else if (validators.lastModified) headers["if-modified-since"] = validators.lastModified
-  return fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) })
+  return networkFetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) })
 }
 
 interface FeedCandidate {
@@ -281,9 +282,7 @@ const fetchFeedDocument = async (requestedUrl: string, validators: FeedValidator
       const reason =
         error instanceof Error && error.name === "TimeoutError"
           ? `timed out after ${Math.round(timeoutMs / 1000)} seconds`
-          : error instanceof Error
-            ? error.message
-            : "request failed"
+          : describeNetworkError(error)
       const failure = `${new URL(candidate.url).hostname}: ${reason}`
       failures.push(failure)
       if (instanceUrl) recordInstanceFailure(instanceUrl, failure)

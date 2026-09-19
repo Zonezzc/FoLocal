@@ -1,7 +1,7 @@
 {
   "name": "Folo",
   "type": "module",
-  "version": "1.13.0",
+  "version": "1.13.1",
   "private": true,
   "description": "Unofficial local-only desktop edition of Folo",
   "author": "Guyungy and contributors; derived from RSSNext/Folo",

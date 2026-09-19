@@ -70,9 +70,9 @@ export class SettingService extends IpcService {
   }
 
   @IpcMethod()
-  setProxyConfig(config: string) {
+  async setProxyConfig(config: string) {
     const result = setProxyConfig(config)
-    updateProxy()
+    await updateProxy()
     return result
   }
 

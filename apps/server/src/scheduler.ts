@@ -1,185 +1,190 @@
 import { db, getLocalSetting, setLocalSetting } from "./db.js"
+import { describeNetworkError } from "./network.js"
 import { refreshFeed } from "./rss.js"
-
-/**
- * The upstream app relies on a server-side crawl plus push notifications. This local edition has
- * no such backend, so this module is the replacement: a timer that walks the subscribed feeds,
- * honours HTTP validators, and records when each feed was last visited.
- */
 
 export const DEFAULT_REFRESH_INTERVAL_MINUTES = 60
 const REFRESH_INTERVAL_KEY = "refresh_interval_minutes"
 const CONCURRENCY = 3
-/** Delay before the first sweep so startup is not competing with the UI for network and disk. */
 const STARTUP_DELAY_MS = 15_000
+const POLL_MS = 30_000
 
 export interface RefreshRunResult {
   total: number
+  completed: number
   failed: number
   notModified: number
   startedAt: string
   finishedAt: string
 }
-
 export interface RefreshRunState extends RefreshRunResult {
-  /** True while a sweep is in flight; the UI uses this to show progress. */
   running: boolean
 }
-
 let running: Promise<RefreshRunResult> | null = null
 let lastRun: RefreshRunResult | null = null
+let currentRun: RefreshRunResult | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 let startupTimer: ReturnType<typeof setTimeout> | null = null
+const queue: string[] = []
+const scheduled = new Set<string>()
+let outcomes = new Map<string, { notModified: boolean; error?: string }>()
 
 export const getRefreshIntervalMinutes = () => {
-  const stored = getLocalSetting(REFRESH_INTERVAL_KEY)
-  if (stored === null) return DEFAULT_REFRESH_INTERVAL_MINUTES
-  const minutes = Number(stored)
+  const minutes = Number(getLocalSetting(REFRESH_INTERVAL_KEY) ?? DEFAULT_REFRESH_INTERVAL_MINUTES)
   return Number.isFinite(minutes) && minutes >= 0 ? minutes : DEFAULT_REFRESH_INTERVAL_MINUTES
 }
-
 export const setRefreshIntervalMinutes = (minutes: number) => {
-  if (!Number.isFinite(minutes) || minutes < 0 || minutes > 24 * 60)
+  if (!Number.isFinite(minutes) || minutes < 0 || minutes > 1440)
     throw new Error("Refresh interval must be between 0 and 1440 minutes")
   setLocalSetting(REFRESH_INTERVAL_KEY, String(Math.floor(minutes)))
+  // Recalculate due times using the new interval; retain failure backoff.
+  db.prepare("UPDATE feed_refresh_state SET next_attempt_at=NULL WHERE failures=0").run()
   restartRefreshScheduler()
 }
-
 const subscribedFeedIds = () =>
-  (
-    db
-      .prepare(
-        "SELECT f.id FROM feeds f WHERE EXISTS (SELECT 1 FROM subscriptions s WHERE s.feed_id=f.id) ORDER BY f.last_refreshed_at IS NOT NULL, f.last_refreshed_at",
-      )
-      .all() as { id: string }[]
-  ).map((row) => row.id)
+  (db.prepare("SELECT DISTINCT feed_id AS id FROM subscriptions").all() as { id: string }[]).map(
+    (r) => r.id,
+  )
 
-/** Feeds that were never fetched, or whose last visit is older than the configured interval. */
-const dueFeedIds = (intervalMinutes: number) => {
+export const dueFeedIds = (intervalMinutes: number) => {
+  const now = new Date().toISOString()
   const cutoff = new Date(Date.now() - intervalMinutes * 60_000).toISOString()
   return (
     db
       .prepare(
-        `SELECT f.id FROM feeds f
-        WHERE EXISTS (SELECT 1 FROM subscriptions s WHERE s.feed_id=f.id)
-          AND (f.last_refreshed_at IS NULL OR f.last_refreshed_at <= ?)
-        ORDER BY f.last_refreshed_at IS NOT NULL, f.last_refreshed_at
-        LIMIT 200`,
+        `
+    SELECT f.id FROM feeds f LEFT JOIN feed_refresh_state r ON r.feed_id=f.id
+    WHERE EXISTS (SELECT 1 FROM subscriptions s WHERE s.feed_id=f.id)
+      AND COALESCE(r.paused,0)=0
+      AND ((r.next_attempt_at IS NOT NULL AND r.next_attempt_at<=?)
+        OR (r.next_attempt_at IS NULL AND (f.last_refreshed_at IS NULL OR f.last_refreshed_at<=?)))
+    ORDER BY COALESCE(r.last_attempt_at,f.last_refreshed_at,'')
+  `,
       )
-      .all(cutoff) as { id: string }[]
-  ).map((row) => row.id)
+      .all(now, cutoff) as { id: string }[]
+  ).map((r) => r.id)
 }
-
-const markFailure = (feedId: string, error: unknown) => {
-  db.prepare("UPDATE feeds SET error_at=?, error_message=? WHERE id=?").run(
-    new Date().toISOString(),
-    error instanceof Error ? error.message : String(error),
+const recordAttempt = (feedId: string, error?: unknown) => {
+  const now = new Date().toISOString()
+  const previous = db
+    .prepare("SELECT failures FROM feed_refresh_state WHERE feed_id=?")
+    .get(feedId) as { failures: number } | undefined
+  const failures = error === undefined ? 0 : (previous?.failures ?? 0) + 1
+  const delayMinutes = failures
+    ? Math.min(24 * 60, 5 * 2 ** Math.min(failures - 1, 9))
+    : Math.max(1, getRefreshIntervalMinutes())
+  const next = new Date(Date.now() + delayMinutes * 60_000).toISOString()
+  db.prepare(
+    `INSERT INTO feed_refresh_state(feed_id,failures,last_attempt_at,next_attempt_at)
+    VALUES(?,?,?,?) ON CONFLICT(feed_id) DO UPDATE SET failures=excluded.failures,
+    last_attempt_at=excluded.last_attempt_at,next_attempt_at=excluded.next_attempt_at`,
+  ).run(feedId, failures, now, next)
+  db.prepare("UPDATE feeds SET error_at=?,error_message=? WHERE id=?").run(
+    failures ? now : null,
+    failures ? describeNetworkError(error) : null,
     feedId,
   )
 }
 
-const refreshBatch = async (feedIds: string[]): Promise<RefreshRunResult> => {
-  const startedAt = new Date().toISOString()
-  let failed = 0
-  let notModified = 0
-  let cursor = 0
-
-  const worker = async () => {
-    for (;;) {
-      const index = cursor++
-      const feedId = feedIds[index]
-      if (feedId === undefined) return
-      const row = db.prepare("SELECT url FROM feeds WHERE id=?").get(feedId) as
-        { url: string } | undefined
-      if (!row) continue
-      try {
-        const result = await refreshFeed(row.url, { conditional: true })
-        if (result.notModified) notModified += 1
-        db.prepare("UPDATE feeds SET error_at=NULL, error_message=NULL WHERE id=?").run(feedId)
-      } catch (error) {
-        failed += 1
-        markFailure(feedId, error)
-      }
+export const runRefreshSweep = (feedIds: string[]): Promise<RefreshRunResult> => {
+  if (!running) {
+    scheduled.clear()
+    outcomes = new Map()
+    currentRun = {
+      total: 0,
+      completed: 0,
+      failed: 0,
+      notModified: 0,
+      startedAt: new Date().toISOString(),
+      finishedAt: "",
     }
   }
-
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, feedIds.length) }, worker))
-
-  return {
-    total: feedIds.length,
-    failed,
-    notModified,
-    startedAt,
-    finishedAt: new Date().toISOString(),
+  for (const id of feedIds) {
+    if (scheduled.has(id)) continue
+    scheduled.add(id)
+    queue.push(id)
+    currentRun!.total++
   }
-}
-
-export const refreshAllSubscribedFeeds = () => runRefreshSweep(subscribedFeedIds())
-
-/** Selected-feed requests share the same lock and completion status as scheduled sweeps. */
-export const refreshFeedsByIds = (feedIds: string[]) => runRefreshSweep(feedIds)
-
-/**
- * Single-flight wrapper: a sweep already in flight is returned instead of starting a second one,
- * so the timer, the startup sweep and a manual "refresh all" never overlap.
- */
-export const runRefreshSweep = (feedIds: string[]): Promise<RefreshRunResult> => {
   if (running) return running
-  const promise = refreshBatch([...new Set(feedIds)])
-    .then((result) => {
-      lastRun = result
-      return result
+  // Defer workers until the shared promise is assigned, including empty sweeps.
+  running = Promise.resolve()
+    .then(async () => {
+      const state = currentRun!
+      const results = outcomes
+      const worker = async () => {
+        while (queue.length) {
+          const id = queue.shift()!
+          const row = db.prepare("SELECT url FROM feeds WHERE id=?").get(id) as
+            { url: string } | undefined
+          try {
+            if (row) {
+              const result = await refreshFeed(row.url, { conditional: true })
+              results.set(id, { notModified: !!result.notModified })
+              if (result.notModified) state.notModified++
+              // A subscription may be removed while its request is in flight.
+              if (db.prepare("SELECT 1 FROM feeds WHERE id=?").get(id)) recordAttempt(id)
+            }
+          } catch (error) {
+            results.set(id, { notModified: false, error: describeNetworkError(error) })
+            state.failed++
+            if (db.prepare("SELECT 1 FROM feeds WHERE id=?").get(id)) recordAttempt(id, error)
+          } finally {
+            state.completed++
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: CONCURRENCY }, worker))
+      state.finishedAt = new Date().toISOString()
+      lastRun = { ...state }
+      return lastRun
     })
     .finally(() => {
       running = null
+      currentRun = null
+      scheduled.clear()
     })
-  running = promise
-  return promise
+  return running
 }
-
-/**
- * Manual "refresh everything" from the UI. Going through the single-flight wrapper keeps it from
- * overlapping a timer sweep, and makes the run visible in the status the UI polls.
- */
-export const runFullRefreshSweep = () => runRefreshSweep(subscribedFeedIds())
-
-const sweepDueFeeds = async () => {
+export const refreshAllSubscribedFeeds = () => runRefreshSweep(subscribedFeedIds())
+export const refreshFeedsByIds = (ids: string[]) => runRefreshSweep(ids)
+export const refreshFeedById = async (id: string) => {
+  const pending = runRefreshSweep([id])
+  const results = outcomes
+  await pending
+  const result = results.get(id)
+  if (!result || result.error) throw new Error(result?.error ?? "Feed no longer exists")
+  return result
+}
+export const runFullRefreshSweep = refreshAllSubscribedFeeds
+export const sweepDueFeeds = async () => {
   const interval = getRefreshIntervalMinutes()
-  if (interval === 0) return
+  if (!interval) return
   const ids = dueFeedIds(interval)
-  if (ids.length === 0) return
-  await runRefreshSweep(ids).catch(() => {
-    // Individual failures are recorded per feed; nothing else to report here.
-  })
+  if (ids.length) await runRefreshSweep(ids)
 }
-
+const restartRefreshScheduler = () => {
+  if (timer) clearInterval(timer)
+  timer = null
+  if (!getRefreshIntervalMinutes()) return
+  timer = setInterval(() => void sweepDueFeeds().catch(console.error), POLL_MS)
+  timer.unref?.()
+}
 export const startRefreshScheduler = () => {
   restartRefreshScheduler()
   if (startupTimer) clearTimeout(startupTimer)
   startupTimer = setTimeout(() => {
     startupTimer = null
-    void sweepDueFeeds()
+    void sweepDueFeeds().catch(console.error)
   }, STARTUP_DELAY_MS)
   startupTimer.unref?.()
 }
-
 export const stopRefreshScheduler = () => {
   if (timer) clearInterval(timer)
   if (startupTimer) clearTimeout(startupTimer)
   timer = null
   startupTimer = null
 }
-
-const restartRefreshScheduler = () => {
-  if (timer) clearInterval(timer)
-  timer = null
-  const interval = getRefreshIntervalMinutes()
-  if (interval === 0) return
-  timer = setInterval(() => void sweepDueFeeds(), interval * 60_000)
-  timer.unref?.()
+export const getRefreshStatus = (): RefreshRunState | null => {
+  const state = currentRun ?? lastRun
+  return state ? { ...state, running: running !== null } : null
 }
-
-export const getRefreshStatus = (): RefreshRunState | null =>
-  lastRun ? { ...lastRun, running: running !== null } : null
-
 export const isRefreshRunning = () => running !== null

@@ -71,5 +71,9 @@
   "menu.window": "Window",
   "menu.zoom": "Zoom",
   "menu.zoomIn": "Zoom In",
-  "menu.zoomOut": "Zoom Out"
+  "menu.zoomOut": "Zoom Out",
+  "profile.cancel": "Cancel",
+  "profile.restore": "Restore and restart",
+  "profile.restore_detail": "Backup: {{time}}\\n{{count}} subscriptions. Current data and settings will be replaced. A recovery backup will be created first.",
+  "profile.restore_title": "Restore this backup?"
 }

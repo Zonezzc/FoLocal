@@ -1,4 +1,5 @@
 import { session } from "electron"
+import { Agent, getGlobalDispatcher, ProxyAgent } from "undici"
 import type { Mock } from "vitest"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -25,6 +26,7 @@ vi.mock("./store", () => ({
 vi.mock("../logger", () => ({
   logger: {
     log: vi.fn(),
+    warn: vi.fn(),
   },
 }))
 
@@ -79,15 +81,26 @@ describe("proxy", () => {
   })
 
   describe("updateProxy", () => {
-    it("should set system proxy mode if no proxy config is set", () => {
+    it("clears an old HTTP dispatcher when returning to system or SOCKS mode", async () => {
+      ;(store.get as Mock).mockReturnValue("http://localhost:8080")
+      await updateProxy()
+      expect(getGlobalDispatcher()).toBeInstanceOf(ProxyAgent)
       ;(store.get as Mock).mockReturnValue("")
-      updateProxy()
+      await updateProxy()
+      expect(getGlobalDispatcher()).toBeInstanceOf(Agent)
+      ;(store.get as Mock).mockReturnValue("socks5://localhost:1080")
+      await updateProxy()
+      expect(getGlobalDispatcher()).toBeInstanceOf(Agent)
+    })
+    it("should set system proxy mode if no proxy config is set", async () => {
+      ;(store.get as Mock).mockReturnValue("")
+      await updateProxy()
       expect(session.defaultSession.setProxy).toHaveBeenCalledWith({ mode: "system" })
     })
 
-    it("should set proxy rules if proxy config is set", () => {
+    it("should set proxy rules if proxy config is set", async () => {
       ;(store.get as Mock).mockReturnValue("http://localhost:8080")
-      updateProxy()
+      await updateProxy()
       expect(logger.log).toHaveBeenCalledWith("Loading proxy: http://localhost:8080,direct://")
       expect(session.defaultSession.setProxy).toHaveBeenCalledWith({
         proxyRules: "http://localhost:8080,direct://",

@@ -1,5 +1,7 @@
-import { app } from "electron"
+import { app, net } from "electron"
 import { join } from "pathe"
+
+import { updateProxy } from "./proxy"
 
 let localAppPromise: Promise<typeof import("@follow/server").app> | undefined
 
@@ -12,6 +14,8 @@ export function getLocalApp() {
     process.env.DATABASE_PATH = join(app.getPath("userData"), "local-api.db")
     process.env.OPENAI_CONFIG_PATH = join(app.getPath("userData"), "openai.json")
     const server = await import("@follow/server")
+    await updateProxy()
+    server.setNetworkFetch((input, init) => net.fetch(input, init))
     server.startRefreshScheduler()
     app.once("before-quit", () => server.stopRefreshScheduler())
     return server.app

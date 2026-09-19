@@ -225,8 +225,9 @@ describe("local release regressions", () => {
       expect(await (await app.request("/local/refresh-status")).json()).toMatchObject({
         data: { running: true },
       })
-      expect((await post("/feeds/refresh", {})).status).toBe(409)
-      expect((await post("/feeds/refresh", { ids: ["fixture-feed"] })).status).toBe(409)
+      const joined = post("/feeds/refresh", { ids: ["fixture-feed"] })
+      release(new Response(rss()))
+      expect((await joined).status).toBe(200)
     } finally {
       release(new Response(rss()))
       expect(await (await pending).json()).toMatchObject({ data: { total: 1, failed: 0 } })

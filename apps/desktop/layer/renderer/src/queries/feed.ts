@@ -102,6 +102,7 @@ const REFRESH_STATUS_KEY = ["refreshStatus"] as const
 
 export interface LocalRefreshRun {
   total: number
+  completed?: number
   failed: number
   notModified: number
   startedAt: string
@@ -144,7 +145,7 @@ export const useRefreshStatusQuery = () =>
     },
     queryKey: REFRESH_STATUS_KEY,
     // Cheap local read; a short interval is what makes background updates show up in the list.
-    refetchInterval: 30_000,
+    refetchInterval: 5_000,
     refetchIntervalInBackground: false,
   })
 

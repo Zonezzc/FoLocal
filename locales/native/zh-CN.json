@@ -71,5 +71,9 @@
   "menu.window": "窗口",
   "menu.zoom": "缩放",
   "menu.zoomIn": "放大",
-  "menu.zoomOut": "缩小"
+  "menu.zoomOut": "缩小",
+  "profile.cancel": "取消",
+  "profile.restore": "恢复并重启",
+  "profile.restore_detail": "备份时间：{{time}}\\n包含 {{count}} 个订阅。将替换当前数据和设置，恢复前会自动保存回退备份。",
+  "profile.restore_title": "恢复此备份？"
 }

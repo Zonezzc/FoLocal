@@ -1,5 +1,5 @@
 import { session } from "electron"
-import { ProxyAgent, setGlobalDispatcher } from "undici"
+import { Agent, ProxyAgent, setGlobalDispatcher } from "undici"
 
 import { logger } from "../logger"
 import { store } from "./store"
@@ -58,14 +58,15 @@ const normalizeProxyUri = (userProxy: string) => {
 
 const BYPASS_RULES = ["<local>"].join(";")
 
-export const updateProxy = () => {
+export const updateProxy = async () => {
   const proxyUri = getProxyConfig()
   if (!proxyUri) {
-    session.defaultSession.setProxy({
+    await session.defaultSession.setProxy({
       // Note that the system mode is different from setting no proxy configuration.
       // In the latter case, Electron falls back to the system settings only if no command-line options influence the proxy configuration.
       mode: "system",
     })
+    setGlobalDispatcher(new Agent())
     return
   }
   const proxyRules = [
@@ -75,7 +76,7 @@ export const updateProxy = () => {
   ].join(",")
 
   logger.log(`Loading proxy: ${proxyRules}`)
-  session.defaultSession.setProxy({
+  await session.defaultSession.setProxy({
     proxyRules,
     proxyBypassRules: BYPASS_RULES,
   })
@@ -86,6 +87,7 @@ export const updateProxy = () => {
   if (protocol !== "http:" && protocol !== "https:") {
     // undici doesn't support socks proxy
     logger.warn("undici only supports http and https proxy, skipping undici proxy setup")
+    setGlobalDispatcher(new Agent())
     return
   }
   // Currently, Session.setProxy is not working for native fetch, which is used by readability.

@@ -23,6 +23,10 @@ class Database extends DatabaseSync {
 }
 
 export const db = new Database(databasePath)
+export const SCHEMA_VERSION = 1
+const schema = db.prepare("PRAGMA user_version").get() as { user_version: number }
+if (schema.user_version > SCHEMA_VERSION)
+  throw new Error("This database requires a newer FoLocal version")
 db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON")
 
 db.exec(`
@@ -110,6 +114,15 @@ db.exec(
 const summaryColumns = db.prepare("PRAGMA table_info(summaries)").all() as { name: string }[]
 if (!summaryColumns.some((column) => column.name === "source_hash"))
   db.exec("ALTER TABLE summaries ADD COLUMN source_hash TEXT")
+
+db.transaction(() => {
+  db.exec(`CREATE TABLE IF NOT EXISTS feed_refresh_state (
+    feed_id TEXT PRIMARY KEY REFERENCES feeds(id) ON DELETE CASCADE,
+    failures INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT, next_attempt_at TEXT,
+    paused INTEGER NOT NULL DEFAULT 0
+  ); PRAGMA user_version = 1;`)
+})()
 
 export const getLocalSetting = (key: string): string | null => {
   const row = db.prepare("SELECT value FROM local_settings WHERE key=?").get(key) as

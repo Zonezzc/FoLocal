@@ -47,7 +47,7 @@ class AppManagerStatic {
     this.registerMenuAndContextMenu()
     this.registerPushNotifications()
 
-    updateProxy()
+    void updateProxy().catch((error) => logger.error("Proxy setup failed", error))
     registerUpdater()
     registerAppTray()
 

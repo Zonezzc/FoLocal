@@ -53,11 +53,19 @@ jobs:
           apps/desktop/layer/renderer/src/lib/local-icons*.ts
           apps/server/src/feed-image*.ts
           apps/server/src/app.ts apps/server/src/rss.ts
+          apps/server/src/scheduler*.ts apps/server/src/network*.ts
+          apps/server/src/db.ts apps/server/src/rsshub.ts apps/server/src/ai.ts
+          apps/desktop/layer/main/src/lib/profile-backup*.ts
+          apps/desktop/layer/main/src/lib/local-app*.ts
+          apps/desktop/layer/main/src/lib/proxy*.ts
+          apps/desktop/layer/main/src/profile-startup.ts
+          apps/desktop/layer/main/src/ipc/services/profile.ts
+          apps/desktop/layer/renderer/src/modules/settings/tabs/local-reliability.tsx
       - name: Test server and isolation
         run: |
           pnpm --filter @follow/server test
-          pnpm --filter @follow/electron-main exec vitest run src/before-bootstrap.test.ts src/lib/local-identity.test.ts src/manager/app.test.ts
-          pnpm --filter @follow/web exec vitest run src/lib/local-icons.test.ts
+          pnpm --filter @follow/electron-main exec vitest run src/before-bootstrap.test.ts src/lib/local-identity.test.ts src/lib/profile-backup.test.ts src/lib/proxy.test.ts src/lib/local-app.test.ts src/manager/app.test.ts
+          pnpm --filter @follow/web exec vitest run src/lib/local-icons.test.ts src/hooks/use-local-refresh-sync.test.tsx
       - name: Build Electron application
         run: pnpm --filter Folo build:electron-vite
       - name: Package macOS Apple Silicon application

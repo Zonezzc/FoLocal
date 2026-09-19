@@ -34,7 +34,7 @@ export class BootstrapManager {
   public static start() {
     AppManager.init()
 
-    const gotTheLock = app.requestSingleInstanceLock()
+    const gotTheLock = app.hasSingleInstanceLock() || app.requestSingleInstanceLock()
     if (!gotTheLock) {
       app.quit()
       return
