@@ -18,25 +18,22 @@ AI 配置由用户在本机填写。仓库不包含订阅数据库、OPML、浏�
 
 ## 两个上游如何同步
 
-`upstreams.json` 定义两个来源。以下命令不会自动合并到 `dev`：
+`upstreams.json` 定义两个来源。脚本只拉取远端引用、统计待同步提交并模拟合并检查冲突，不改变当前分支或工作文件，不推送代码，不创建 PR：
 
 ```bash
-# 只检查待同步提交
+# 检查待同步提交和冲突
 node scripts/upstream-sync.mjs
 
-# 在独立分支准备更新，创建草稿 PR；要求工作区干净且 gh 已登录
-node scripts/upstream-sync.mjs --prepare
-
-# 只处理一个上游
-node scripts/upstream-sync.mjs --prepare --upstream=folocal
-node scripts/upstream-sync.mjs --prepare --upstream=folo
+# 只检查一个上游
+node scripts/upstream-sync.mjs --upstream=folocal
+node scripts/upstream-sync.mjs --upstream=folo
 ```
 
-无冲突时先把上游合并进独立同步分支，然后由 `FoLocal Checks` 验证类型、lint、服务测试、隔离测试和 Electron 构建。有冲突时保留上游提交供 PR 对比，明确列出冲突，等待处理。相同上游提交已有 PR 时不重复创建，包括已关闭的 PR，避免反复提出已拒绝的更新。
+这是个人自用分支，不使用 PR 流程，也不向两个上游提交 PR。更新需在隔离的工作区验证兼容性；通过后直接提交到自己的仓库。`FoLocal Checks` 在推送时验证类型、lint、服务测试、隔离测试和 Electron 构建。存在冲突时报告冲突，等待处理；没有文本冲突也不代表功能兼容。
 
-PR 检查通过也不自动发布。官方 Folo 可能新增官方服务依赖、套餐判断或数据库变化，需要检查本地实现是否兼容。客户端自动下载安装更新暂未启用，避免覆盖本地数据和修复。
+定时检查不自动合并、发布或覆盖已安装的应用。官方 Folo 可能新增官方服务依赖、套餐判断或数据库变化，需要检查本地实现是否兼容。客户端自动下载安装更新暂未启用，避免覆盖本地数据和修复。
 
-Codex 任务的定时检查会调用上述脚本；这个定时任务依赖本机 Codex 自动化运行环境，单独克隆仓库不会继承该定时任务。也可手动执行脚本。
+Codex 任务的定时检查调用上述脚本，仅在上游有新变化或检查失败时通知，相同状态不重复提醒。这个定时任务依赖本机 Codex 自动化运行环境，单独克隆仓库不会继承该定时任务。也可手动执行脚本。继承的发布、部署等工作流已停用，仅启用自己的 `FoLocal Checks`。
 
 ## 发布前验证
 
