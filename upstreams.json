@@ -1,0 +1,13 @@
+{
+  "repository": "Zonezzc/FoLocal",
+  "base": "dev",
+  "upstreams": [
+    {
+      "name": "folocal",
+      "remote": "upstream-local",
+      "repository": "Guyungy/Folo-Local",
+      "branch": "dev"
+    },
+    { "name": "folo", "remote": "upstream-folo", "repository": "RSSNext/Folo", "branch": "dev" }
+  ]
+}

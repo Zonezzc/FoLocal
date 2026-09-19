@@ -4,11 +4,15 @@
 > 这是基于 [RSSNext/Folo](https://github.com/RSSNext/Folo) 修改的非官方本地桌面版，
 > 不是 RSSNext 或 Folo 官方发行版，也未获得其背书。
 >
-> - 本地版仓库（本仓库）：<https://github.com/Guyungy/Folo-Local>
-> - 上游仓库：<https://github.com/RSSNext/Folo>
+> - 本维护分支：<https://github.com/Zonezzc/FoLocal>
+> - 本地版上游：<https://github.com/Guyungy/Folo-Local>
+> - 官方上游：<https://github.com/RSSNext/Folo>
 
 FoLocal 将订阅、文章、阅读状态和 AI 配置保存在用户自己的电脑上，主要面向希望
 使用单机 RSS 阅读器、无需账号和云端后端的用户。
+
+本分支补齐与官方 Folo 并存的数据隔离、链接协议和图标修复，并跟踪两个上游。
+构建、迁移及同步方式见 [维护说明](docs/fork-maintenance.md)。
 
 ## 与官方版本的主要区别
 
@@ -26,7 +30,7 @@ FoLocal 将订阅、文章、阅读状态和 AI 配置保存在用户自己的�
 
 ## 数据与隐私
 
-- 默认数据库：`~/Library/Application Support/Folo/local-api.db`（macOS）。
+- 默认数据库：`~/Library/Application Support/FoLocal/local-api.db`（macOS）；不会自动读取原版 `Folo` 目录。
 - API Key 和 AI 设置单独保存在 Electron 用户数据目录的 `openai.json` 中，不在 `local-api.db` 内；实际目录以应用“本地服务”页面显示为准。请保护操作系统账户及配置文件。
 - 当前“数据库备份”仅备份 SQLite，不包含 `openai.json`、渲染器本地设置或聊天记录，不能视为完整应用备份。
 - 本地版暂时禁用自动更新，避免接入官方 OTA 通道；请从本仓库 Release 手动更新。
@@ -37,7 +41,7 @@ FoLocal 将订阅、文章、阅读状态和 AI 配置保存在用户自己的�
 ## macOS 下载
 
 Apple Silicon 用户可从本仓库的
-[Releases](https://github.com/Guyungy/Folo-Local/releases) 下载最新版 DMG 或 ZIP。
+[Releases](https://github.com/Zonezzc/FoLocal/releases) 获取本分支已发布的构建；尚无构建时可按下文从源码打包。
 
 当前构建使用 ad-hoc 签名，未经过 Apple 公证。首次启动如果被 Gatekeeper 拦截，请在
 “系统设置 → 隐私与安全性”中确认打开。请仅从本仓库 Release 下载，并核对发布页提供的
@@ -78,8 +82,8 @@ DATABASE_PATH="/path/to/local-api.db" \
 - `apps/desktop/layer/main`：在 Electron 主进程内嵌本地 API。
 - `apps/desktop/layer/renderer`：本地设置、错误提示及本地版交互。
 
-完整变更可查看 [提交记录](https://github.com/Guyungy/Folo-Local/commits/dev) 和各版本
-[Release Notes](https://github.com/Guyungy/Folo-Local/releases)。
+完整变更可查看 [提交记录](https://github.com/Zonezzc/FoLocal/commits/dev) 和各版本
+[Release Notes](https://github.com/Zonezzc/FoLocal/releases)。
 
 ## 上游项目与署名
 

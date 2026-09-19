@@ -18,6 +18,7 @@ import {
 } from "./ai.js"
 import { articleContext } from "./chat-context.js"
 import { databasePath, db, jsonValue } from "./db.js"
+import { normalizeFeedImage } from "./feed-image.js"
 import type { ParsedSubscription } from "./opml.js"
 import { buildOpml, parseOpml } from "./opml.js"
 import { refreshFeed } from "./rss.js"
@@ -84,7 +85,7 @@ const feedFromRow = (row: Record<string, unknown>): Feed & { type: "feed" } => (
   url: String(row.url),
   title: row.title as string | null,
   description: row.description as string | null,
-  image: row.image as string | null,
+  image: normalizeFeedImage(row.image, row.site_url || row.url),
   siteUrl: row.site_url as string | null,
   ownerUserId: row.owner_user_id as string | null,
   errorAt: row.error_at as string | null,

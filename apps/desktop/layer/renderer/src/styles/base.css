@@ -8,6 +8,11 @@ html,
 html {
   overflow: hidden;
 }
+
+/* Keep local desktop icons readable when native vibrancy is unavailable. */
+html[data-build-type="electron"] {
+  @apply bg-sidebar;
+}
 :root {
   --sat: env(safe-area-inset-top);
   --sar: env(safe-area-inset-right);

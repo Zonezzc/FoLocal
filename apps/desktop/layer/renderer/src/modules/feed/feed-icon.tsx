@@ -3,13 +3,14 @@ import { PlatformIcon } from "@follow/components/ui/platform-icon/index.jsx"
 import type { FeedModel } from "@follow/store/feed/types"
 import { getBackgroundGradient } from "@follow/utils/color"
 import { getImageProxyUrl } from "@follow/utils/img-proxy"
-import { cn, getUrlIcon } from "@follow/utils/utils"
+import { cn } from "@follow/utils/utils"
 import * as AvatarPrimitive from "@radix-ui/react-avatar"
 import { m } from "motion/react"
 import type { ReactNode } from "react"
 import { useMemo } from "react"
 
 import { useCanUseImageProxy } from "~/lib/img-proxy"
+import { getLocalUrlIcon } from "~/lib/local-icons"
 
 const { Avatar, AvatarFallback, AvatarImage } = AvatarPrimitive
 
@@ -109,7 +110,6 @@ function getIconProps(props: GetIconPropsProps) {
 const getFeedIconSrc = ({
   src,
   siteUrl,
-  fallback,
   proxy,
   canUseProxy,
 }: {
@@ -135,7 +135,7 @@ const getFeedIconSrc = ({
     return [src, ""]
   }
   if (!siteUrl) return ["", ""]
-  const ret = getUrlIcon(siteUrl, fallback)
+  const ret = getLocalUrlIcon(siteUrl)
 
   return [ret.src, ret.fallbackUrl]
 }

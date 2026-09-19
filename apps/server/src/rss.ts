@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { XMLParser } from "fast-xml-parser"
 
 import { db } from "./db.js"
+import { normalizeFeedImage } from "./feed-image.js"
 import {
   candidateInstances,
   getRouteAffinity,
@@ -313,7 +314,7 @@ const feedFromStoredRow = (row: Record<string, unknown>): Feed => ({
   url: String(row.url),
   title: (row.title as string | null) ?? null,
   description: (row.description as string | null) ?? null,
-  image: (row.image as string | null) ?? null,
+  image: normalizeFeedImage(row.image, row.site_url || row.url),
   siteUrl: (row.site_url as string | null) ?? null,
   ownerUserId: (row.owner_user_id as string | null) ?? null,
   errorAt: (row.error_at as string | null) ?? null,
@@ -361,7 +362,10 @@ export const refreshFeed = async (
     ...emptyFeed(feedId, contentUrl),
     title: text(source.title),
     description: text(source.description ?? source.subtitle),
-    image: text((source.image as { url?: unknown } | undefined)?.url) ?? text(source.logo),
+    image: normalizeFeedImage(
+      text((source.image as { url?: unknown } | undefined)?.url) ?? text(source.logo),
+      siteUrl || result.documentUrl || contentUrl,
+    ),
     siteUrl,
     lastRefreshedAt: refreshedAt,
   }

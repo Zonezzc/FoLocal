@@ -1,6 +1,6 @@
 import { PushReceiver } from "@eneris/push-receiver"
 import { callWindowExpose } from "@follow/shared/bridge"
-import { APP_PROTOCOL, DEV, LEGACY_APP_PROTOCOL } from "@follow/shared/constants"
+import { DEV } from "@follow/shared/constants"
 import { env } from "@follow/shared/env.desktop"
 import { app, nativeTheme, Notification, shell } from "electron"
 import contextMenu from "electron-context-menu"
@@ -14,6 +14,7 @@ import { saveMediaToEagle } from "../ipc/services/integration"
 import { checkAndCleanCodeCache, clearCacheCronJob } from "../lib/cleaner"
 import { getSessionTokenFromCookies, syncSessionToCliConfig } from "../lib/cli-session-sync"
 import { t } from "../lib/i18n"
+import { LOCAL_APP_PROTOCOL } from "../lib/local-identity"
 import { updateProxy } from "../lib/proxy"
 import { store } from "../lib/store"
 import { registerAppTray } from "../lib/tray"
@@ -64,7 +65,7 @@ class AppManagerStatic {
   }
 
   private registerProtocols() {
-    const protocols = [LEGACY_APP_PROTOCOL, APP_PROTOCOL]
+    const protocols = [LOCAL_APP_PROTOCOL]
 
     for (const protocolName of protocols) {
       if (process.defaultApp) {

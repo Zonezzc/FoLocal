@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => ({
   storeGet: vi.fn(),
   storeSet: vi.fn(),
   updateNotificationsToken: vi.fn(),
+  registerProtocol: vi.fn(),
 }))
 
 vi.mock("@eneris/push-receiver", () => ({
@@ -94,7 +95,7 @@ vi.mock("@follow/shared/env.desktop", () => ({
 }))
 
 vi.mock("electron", () => ({
-  app: {},
+  app: { setAsDefaultProtocolClient: mocks.registerProtocol },
   nativeTheme: {},
   Notification: class {},
   shell: {},
@@ -158,6 +159,12 @@ describe("AppManager push notifications", () => {
       if (key === "notifications-persistent-ids") return ["stored-persistent-id"]
       return undefined
     })
+  })
+
+  it("registers only the local protocol without taking over official Folo links", () => {
+    const register = Reflect.get(AppManager, "registerProtocols") as () => void
+    register.call(AppManager)
+    expect(mocks.registerProtocol).toHaveBeenCalledExactlyOnceWith("folocal")
   })
 
   it("initializes and handles events without logging push secrets or payloads", async () => {

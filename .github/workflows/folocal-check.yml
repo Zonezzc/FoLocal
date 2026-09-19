@@ -1,0 +1,59 @@
+name: FoLocal Checks
+
+on:
+  push:
+    branches: [dev, "sync/**"]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: folocal-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  local-desktop:
+    if: github.repository == 'Zonezzc/FoLocal'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      VITE_WEB_URL: http://localhost:5173
+      VITE_API_URL: http://localhost:3000
+      VITE_BUILD_TYPE: production
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --registry=https://registry.npmjs.org
+      - name: Build main process declarations
+        run: pnpm --filter @follow/electron-main build
+      - name: Typecheck local desktop and server
+        run: pnpm --filter @follow/server --filter @follow/electron-main --filter @follow/web typecheck
+      - name: Lint maintained local changes
+        run: >-
+          pnpm exec eslint
+          apps/desktop/layer/main/src/lib/local-identity*.ts
+          apps/desktop/layer/main/src/before-bootstrap.ts
+          apps/desktop/layer/main/src/before-bootstrap.test.ts
+          apps/desktop/layer/main/src/manager/app.ts
+          apps/desktop/layer/main/src/manager/app.test.ts
+          apps/desktop/layer/main/src/manager/bootstrap.ts
+          apps/desktop/layer/renderer/src/lib/local-icons*.ts
+          apps/server/src/feed-image*.ts
+          apps/server/src/app.ts apps/server/src/rss.ts
+      - name: Test server and isolation
+        run: |
+          pnpm --filter @follow/server test
+          pnpm --filter @follow/electron-main exec vitest run src/before-bootstrap.test.ts src/lib/local-identity.test.ts src/manager/app.test.ts
+          pnpm --filter @follow/web exec vitest run src/lib/local-icons.test.ts
+      - name: Build Electron application
+        run: pnpm --filter Folo build:electron-vite

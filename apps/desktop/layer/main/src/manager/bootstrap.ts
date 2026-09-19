@@ -2,7 +2,7 @@ import { rmSync } from "node:fs"
 
 import { electronApp, optimizer } from "@electron-toolkit/utils"
 import { callWindowExpose } from "@follow/shared/bridge"
-import { DEV, LEGACY_APP_PROTOCOL } from "@follow/shared/constants"
+import { DEV } from "@follow/shared/constants"
 import { env } from "@follow/shared/env.desktop"
 import { createBuildSafeHeaders } from "@follow/utils/headers"
 import { IMAGE_PROXY_URL } from "@follow/utils/img-proxy"
@@ -15,6 +15,7 @@ import { WindowManager } from "~/manager/window"
 import { isMacOS } from "../env"
 import { migrateAuthCookiesToNewApiDomain } from "../lib/auth-cookie-migration"
 import { dedupeManagedAuthCookies } from "../lib/auth-cookies"
+import { LOCAL_APP_ID } from "../lib/local-identity"
 import { handleUrlRouting } from "../lib/router"
 import { store } from "../lib/store"
 import { updateNotificationsToken } from "../lib/user"
@@ -71,7 +72,7 @@ export class BootstrapManager {
         optimizer.watchWindowShortcuts(window)
       })
 
-      electronApp.setAppUserModelId(`re.${LEGACY_APP_PROTOCOL}`)
+      electronApp.setAppUserModelId(LOCAL_APP_ID)
 
       session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
         details.requestHeaders = buildSafeHeaders({

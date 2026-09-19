@@ -18,6 +18,12 @@ import yaml from "js-yaml"
 import path, { resolve } from "pathe"
 import { rimraf, rimrafSync } from "rimraf"
 
+import {
+  LOCAL_APP_ID,
+  LOCAL_APP_NAME,
+  LOCAL_APP_PROTOCOL,
+} from "./layer/main/src/lib/local-identity"
+
 const ResolvedMakerAppImage: typeof MakerAppImage = (MakerAppImage as any).default || MakerAppImage
 const platform = process.argv.find((arg) => arg.startsWith("--platform"))?.split("=")[1]
 const mode = process.argv.find((arg) => arg.startsWith("--mode"))?.split("=")[1]
@@ -138,20 +144,16 @@ const ignorePattern = new RegExp(`^/node_modules/(?!(?:${keepModulePattern})(?:/
 
 const config: ForgeConfig = {
   packagerConfig: {
-    name: isStaging ? "FoLocal Staging" : "FoLocal",
+    name: isStaging ? `${LOCAL_APP_NAME} Staging` : LOCAL_APP_NAME,
     appCategoryType: "public.app-category.news",
     buildVersion: process.env.BUILD_VERSION || undefined,
-    appBundleId: "is.follow",
+    appBundleId: isStaging ? `${LOCAL_APP_ID}.staging` : LOCAL_APP_ID,
     icon: isStaging ? "resources/icon-staging" : "resources/icon-local",
     extraResource: ["./resources/app-update.yml", "../../LICENSE", "../../NOTICE.md"],
     protocols: [
       {
-        name: "Folo",
-        schemes: ["follow"],
-      },
-      {
-        name: "Folo",
-        schemes: ["folo"],
+        name: LOCAL_APP_NAME,
+        schemes: [LOCAL_APP_PROTOCOL],
       },
     ],
 
@@ -307,8 +309,8 @@ const config: ForgeConfig = {
       config: {
         // This fork publishes its own builds; the upstream repository is not a release target.
         repository: {
-          owner: "Guyungy",
-          name: "Folo-Local",
+          owner: "Zonezzc",
+          name: "FoLocal",
         },
         draft: true,
       },
