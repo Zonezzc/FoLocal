@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
+import { Markdown } from "~/components/ui/markdown/Markdown"
 import { ipcServices } from "~/lib/client"
 
 import { acquireSourceArticle } from "./source-article"
@@ -40,16 +41,23 @@ export function SiyuanClipPanel({
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
+  const [showMarkdown, setShowMarkdown] = useState(false)
   const [connection, setConnection] = useState<{
     endpoint: string
     notebook: string
     path: string
+    assetPath?: string
   }>()
   const [token, setToken] = useState("")
   const [notebooks, setNotebooks] = useState<{ id: string; name: string }[]>([])
   const values = connection ||
-    config.data || { endpoint: "http://127.0.0.1:6806", notebook: "", path: "/FoLocal" }
-  const update = (key: "endpoint" | "notebook" | "path", value: string) =>
+    config.data || {
+      endpoint: "http://127.0.0.1:6806",
+      notebook: "",
+      path: "/FoLocal",
+      assetPath: "/assets/FoLocal/",
+    }
+  const update = (key: "endpoint" | "notebook" | "path" | "assetPath", value: string) =>
     setConnection({ ...values, [key]: value })
   const action = async (task: () => Promise<void>) => {
     setBusy(true)
@@ -58,6 +66,7 @@ export function SiyuanClipPanel({
     try {
       await task()
     } catch (cause) {
+      setMessage("")
       setError(errorText(cause))
     } finally {
       setBusy(false)
@@ -89,7 +98,7 @@ export function SiyuanClipPanel({
   if (!IN_ELECTRON) return null
   return (
     <section className="space-y-4 p-4">
-      <h3 className="font-semibold">{t("siyuan.title")}</h3>
+      {settings && <h3 className="font-semibold">{t("siyuan.title")}</h3>}
       <p className="text-sm text-text-secondary">{t("siyuan.description")}</p>
       {settings && (
         <fieldset disabled={busy || config.isLoading} className="space-y-3">
@@ -150,6 +159,15 @@ export function SiyuanClipPanel({
               onChange={(event) => update("path", event.target.value)}
             />
           </label>
+          <label className="block text-sm">
+            {t("siyuan.asset_path")}
+            <input
+              className={fieldClass}
+              value={values.assetPath ?? "/assets/FoLocal/"}
+              onChange={(event) => update("assetPath", event.target.value)}
+            />
+          </label>
+          <p className="text-xs text-text-secondary">{t("siyuan.asset_path_hint")}</p>
           <button
             className={buttonClass}
             onClick={() =>
@@ -207,17 +225,44 @@ export function SiyuanClipPanel({
               {t(draft.mode === "rendered" ? "siyuan.mode_rendered" : "siyuan.mode_static")} ·{" "}
               {t("siyuan.images", { count: draft.images.length })}
             </p>
-            <label className="block text-sm">
-              {t("siyuan.preview")}
-              <textarea
-                readOnly
-                className={`${fieldClass} h-64 resize-y font-mono`}
-                value={draft.images.reduce(
-                  (markdown, image) => markdown.replaceAll(image.placeholder, image.url),
-                  draft.markdown,
-                )}
-              />
-            </label>
+            <div className="flex gap-2">
+              <button
+                className={buttonClass}
+                aria-pressed={!showMarkdown}
+                onClick={() => setShowMarkdown(false)}
+              >
+                {t("siyuan.readable_preview")}
+              </button>
+              <button
+                className={buttonClass}
+                aria-pressed={showMarkdown}
+                onClick={() => setShowMarkdown(true)}
+              >
+                {t("siyuan.preview")}
+              </button>
+            </div>
+            {showMarkdown ? (
+              <label className="block text-sm">
+                <span className="sr-only">{t("siyuan.preview")}</span>
+                <textarea
+                  readOnly
+                  className={`${fieldClass} h-64 resize-y font-mono`}
+                  value={draft.images.reduce(
+                    (markdown, image) => markdown.replaceAll(image.placeholder, image.url),
+                    draft.markdown,
+                  )}
+                />
+              </label>
+            ) : (
+              <div className="max-h-80 overflow-auto rounded-lg border border-fill p-4">
+                <Markdown>
+                  {draft.images.reduce(
+                    (markdown, image) => markdown.replaceAll(image.placeholder, image.url),
+                    draft.markdown,
+                  )}
+                </Markdown>
+              </div>
+            )}
             <p className="text-sm text-text-secondary">
               {config.data?.notebook
                 ? `${t("siyuan.destination")}: ${config.data.notebook}${config.data.path}`

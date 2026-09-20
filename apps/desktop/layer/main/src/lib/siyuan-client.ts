@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 
 import { httpURL, readLimited } from "./clip-network"
+import { assetDirectory } from "./siyuan-assets"
 import type { SiyuanConfig } from "./siyuan-config"
 
 export interface SiyuanNotebook {
@@ -58,9 +59,10 @@ export class SiyuanClient {
     if (!(await this.notebooks()).some((row) => row.id === this.config.notebook))
       throw new Error("Choose an open SiYuan notebook")
   }
-  async upload(bytes: Uint8Array<ArrayBuffer>, name: string, mime: string) {
+  async upload(bytes: Uint8Array<ArrayBuffer>, name: string, mime: string, directory: string) {
     const form = new FormData()
-    form.append("assetsDirPath", "/assets/")
+    const target = assetDirectory(directory)
+    form.append("assetsDirPath", target)
     form.append("file[]", new Blob([bytes], { type: mime }), name)
     const response = await this.request("/api/asset/upload", { method: "POST", body: form })
     if (!response.ok) throw new Error(`SiYuan upload HTTP ${response.status}`)
@@ -73,7 +75,9 @@ export class SiyuanClient {
       result.code !== 0 ||
       result.data?.errFiles?.length ||
       !path ||
-      !/^assets\/[\w\p{L}\p{N} .()-]+$/u.test(path)
+      !path.startsWith(target.slice(1)) ||
+      !/^assets\/[\w\p{L}\p{N} .()/-]+$/u.test(path) ||
+      path.split("/").some((part) => !part || part === "." || part === "..")
     )
       throw new Error("SiYuan did not return a valid uploaded asset")
     return path

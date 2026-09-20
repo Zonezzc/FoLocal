@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite"
 import type { SourceArticle } from "@follow/clipper-core"
 
 import { httpURL, readLimited } from "./clip-network"
+import { articleAssetDirectory } from "./siyuan-assets"
 import type { SiyuanClient } from "./siyuan-client"
 import { digest, targetPath } from "./siyuan-client"
 
@@ -18,6 +19,9 @@ export interface ClipReceipt {
   imageCount: number
   updatedAt: string
 }
+export interface ClipProgress extends ClipReceipt {
+  download?: { index: number; received: number; total?: number }
+}
 interface ClipJob extends ClipReceipt {
   key: string
   draft: SourceArticle
@@ -26,6 +30,7 @@ interface ClipJob extends ClipReceipt {
   notebook: string
   assets: Record<string, { path: string; hash: string }>
   finalMarkdown?: string
+  assetDir?: string
 }
 const active = new Map<string, Promise<ClipReceipt>>()
 const receipt = (job: ClipJob): ClipReceipt => ({
@@ -58,6 +63,7 @@ export class SiyuanClips {
     private readonly db: DatabaseSync,
     private readonly client: SiyuanClient,
     private readonly fetchSource: typeof fetch,
+    private readonly onProgress?: (progress: ClipProgress) => void,
   ) {}
   private persist(job: ClipJob) {
     job.updatedAt = new Date().toISOString()
@@ -67,6 +73,7 @@ export class SiyuanClips {
       ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at,receipt=excluded.receipt,data=excluded.data`,
       )
       .run(job.id, job.key, job.updatedAt, JSON.stringify(receipt(job)), JSON.stringify(job))
+    this.onProgress?.(receipt(job))
   }
   private load(column: "id" | "clip_key", value: string): ClipJob | undefined {
     const row = this.db.prepare(`SELECT data FROM siyuan_clips WHERE ${column}=?`).get(value) as
@@ -175,8 +182,9 @@ export class SiyuanClips {
         const occupied = await this.client.findPath(job.path)
         if (occupied.length) job.path = `${job.path} · ${job.id.slice(0, 8)}`
         job.state = "uploading"
+        job.assetDir ||= articleAssetDirectory(this.client.config.assetPath, job.id)
         this.persist(job)
-        for (const image of job.draft.images) {
+        for (const [index, image] of job.draft.images.entries()) {
           const imageURL = httpURL(image.url)
           if (job.assets[imageURL]) {
             try {
@@ -187,12 +195,19 @@ export class SiyuanClips {
             }
           }
           const response = await this.fetchSource(imageURL, {
-            headers: { referer: job.url },
+            // Let Chromium apply its referrer policy instead of rejecting a raw Referer header.
+            referrer: httpURL(job.url),
+            referrerPolicy: "strict-origin-when-cross-origin",
             signal: AbortSignal.timeout(25_000),
           })
           const mime = response.headers.get("content-type")?.split(";")[0] || ""
           if (!mime.startsWith("image/")) throw new Error("Image URL did not return an image")
-          const bytes = await readLimited(response)
+          const bytes = await readLimited(response, undefined, (received, total) => {
+            this.onProgress?.({
+              ...receipt(job),
+              download: { index: index + 1, received, total },
+            })
+          })
           if (!bytes.length) throw new Error("Empty image response")
           const hash = digest(bytes)
           const extension = mime
@@ -201,8 +216,10 @@ export class SiyuanClips {
             .slice(0, 16)
           const path = await this.client.upload(
             bytes,
-            `folocal-${hash.slice(0, 20)}.${extension}`,
+            // SiYuan deduplicates by content and filename across folders. Keep it scoped to this clip.
+            `folocal-${job.id}-${hash.slice(0, 20)}.${extension}`,
             mime,
+            job.assetDir,
           )
           await this.client.verifyAsset(path, hash)
           job.assets[imageURL] = { path, hash }

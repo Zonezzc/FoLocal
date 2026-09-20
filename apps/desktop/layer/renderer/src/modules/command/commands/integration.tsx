@@ -28,6 +28,7 @@ import { useRouteParams } from "~/hooks/biz/useRouteParams"
 import { ipcServices } from "~/lib/client"
 import { CustomIntegrationManager } from "~/modules/integration/custom-integration-manager"
 import { getEntryContentAsMarkdown } from "~/modules/integration/entry-content-markdown"
+import { quickClipToSiyuan } from "~/modules/integration/siyuan-quick-clip"
 import { SiyuanClipPanel } from "~/modules/integration/SiyuanClipPanel"
 
 import { useRegisterCommandEffect } from "../hooks/use-register-command"
@@ -63,11 +64,14 @@ const useRegisterSiyuanCommand = () => {
           category,
           run: ({ entryId }: { entryId: string }) => {
             const url = getEntry(entryId)?.url
-            if (url)
-              present({
-                title: t("siyuan.title"),
-                content: () => <SiyuanClipPanel initialUrl={url} />,
-              })
+            if (url) {
+              void quickClipToSiyuan(url, t, () =>
+                present({
+                  title: t("siyuan.title"),
+                  content: () => <SiyuanClipPanel initialUrl={url} settings />,
+                }),
+              )
+            }
           },
         }),
     { deps: [t, present] },

@@ -5,12 +5,14 @@ import { getIpcContext, IpcMethod, IpcService } from "electron-ipc-decorator"
 import { isClipRendererURL } from "../../lib/clip-network"
 import { getLocalDatabase } from "../../lib/local-app"
 import { SiyuanClient } from "../../lib/siyuan-client"
+import type { ClipProgress } from "../../lib/siyuan-clips"
 import { listClipJobs, SiyuanClips } from "../../lib/siyuan-clips"
 import { readSiyuanConfig, saveSiyuanConfig } from "../../lib/siyuan-config"
 import { SOURCE_PARTITION } from "./source-article"
 
 export class SiyuanService extends IpcService {
   static override readonly groupName = "siyuan"
+  private progressByRequest = new Map<string, { owner: number; value?: ClipProgress }>()
   private trusted() {
     if (
       !isClipRendererURL(
@@ -27,7 +29,13 @@ export class SiyuanService extends IpcService {
     return { ...config, hasToken: !!token }
   }
   @IpcMethod()
-  async configure(input: { endpoint: string; token?: string; notebook: string; path: string }) {
+  async configure(input: {
+    endpoint: string
+    token?: string
+    notebook: string
+    path: string
+    assetPath?: string
+  }) {
     this.trusted()
     saveSiyuanConfig(input)
     return this.settings()
@@ -42,17 +50,34 @@ export class SiyuanService extends IpcService {
     this.trusted()
     return listClipJobs(await getLocalDatabase())
   }
-  private async engine() {
+  private async engine(onProgress?: (progress: ClipProgress) => void) {
     return new SiyuanClips(
       await getLocalDatabase(),
       new SiyuanClient(readSiyuanConfig(), (input, init) => net.fetch(input, init)),
       (input, init) => session.fromPartition(SOURCE_PARTITION).fetch(input, init),
+      onProgress,
     )
   }
   @IpcMethod()
-  async save(draft: SourceArticle, asCopy = false) {
+  async save(draft: SourceArticle, asCopy = false, requestId?: string) {
     this.trusted()
-    return (await this.engine()).save(draft, asCopy)
+    const owner = getIpcContext().sender.id
+    if (requestId) this.progressByRequest.set(requestId, { owner })
+    try {
+      return await (
+        await this.engine((value) => {
+          if (requestId) this.progressByRequest.set(requestId, { owner, value })
+        })
+      ).save(draft, asCopy)
+    } finally {
+      if (requestId) this.progressByRequest.delete(requestId)
+    }
+  }
+  @IpcMethod()
+  async progress(requestId: string) {
+    this.trusted()
+    const progress = this.progressByRequest.get(requestId)
+    return progress?.owner === getIpcContext().sender.id ? progress.value : undefined
   }
   @IpcMethod()
   async retry(id: string) {

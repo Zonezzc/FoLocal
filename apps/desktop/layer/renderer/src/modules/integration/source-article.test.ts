@@ -46,4 +46,18 @@ describe("desktop source acquisition", () => {
     expect(result).toBe("Unavailable source")
     expect(capture).toHaveBeenCalledTimes(2)
   })
+  it("keeps the fallback browser hidden during quick clipping", async () => {
+    capture.mockRejectedValueOnce(new Error("Needs rendering")).mockResolvedValueOnce({
+      url: "https://example.org/article",
+      html,
+      mode: "rendered",
+      fetchedAt: "now",
+    })
+    await acquireSourceArticle("https://example.org/article", false, true)
+    expect(capture).toHaveBeenLastCalledWith({
+      url: "https://example.org/article",
+      rendered: true,
+      background: true,
+    })
+  })
 })

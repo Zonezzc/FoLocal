@@ -12,7 +12,11 @@ export class SourceArticleService extends IpcService {
   private windows = new Map<number, { url: string; window: BrowserWindow }>()
 
   @IpcMethod()
-  async capture(input: { url: string; rendered?: boolean }): Promise<SourcePage> {
+  async capture(input: {
+    url: string
+    rendered?: boolean
+    background?: boolean
+  }): Promise<SourcePage> {
     const url = httpURL(input.url)
     const owner = getIpcContext().sender
     if (
@@ -50,6 +54,7 @@ export class SourceArticleService extends IpcService {
     if (!current || current.url !== url || current.window.isDestroyed()) {
       current?.window.destroy()
       const window = new BrowserWindow({
+        show: !input.background,
         width: 1100,
         height: 800,
         title: "FoLocal · Source article",
@@ -107,7 +112,7 @@ export class SourceArticleService extends IpcService {
         clearTimeout(timer)
       }
     }
-    current.window.show()
+    if (!input.background) current.window.show()
     let html = ""
     for (let attempt = 0; attempt < 4; attempt++) {
       if (current.window.isDestroyed()) throw new Error("Source window was closed")

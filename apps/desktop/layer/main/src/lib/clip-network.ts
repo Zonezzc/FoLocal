@@ -18,12 +18,15 @@ export const httpURL = (value: string): string => {
 export const readLimited = async (
   response: Response,
   limit = 10 * 1024 * 1024,
+  onProgress?: (received: number, total?: number) => void,
 ): Promise<Uint8Array<ArrayBuffer>> => {
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   const reader = response.body?.getReader()
   if (!reader) throw new Error("Empty response body")
   const chunks: Uint8Array[] = []
   let size = 0
+  const length = Number(response.headers.get("content-length"))
+  const total = length > 0 && Number.isFinite(length) ? length : undefined
   try {
     while (true) {
       const chunk = await reader.read()
@@ -31,6 +34,7 @@ export const readLimited = async (
       size += chunk.value.length
       if (size > limit) throw new Error("Response exceeds the size limit")
       chunks.push(chunk.value)
+      onProgress?.(size, total)
     }
   } catch (error) {
     await reader.cancel().catch(() => {})
