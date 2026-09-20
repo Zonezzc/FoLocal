@@ -1,6 +1,6 @@
 import { jotaiStore } from "@follow/utils"
 import { getStorageNS } from "@follow/utils/ns"
-import { transformShortcut } from "@follow/utils/utils"
+import { getOS, transformShortcut } from "@follow/utils/utils"
 import { useAtomValue, useSetAtom } from "jotai"
 import { atomWithStorage, selectAtom } from "jotai/utils"
 import { useCallback, useMemo } from "react"
@@ -39,6 +39,10 @@ export const defaultCommandShortcuts = {
   [COMMAND_ID.entry.share]: transformShortcut("$mod+Alt+S"),
   [COMMAND_ID.entry.star]: "S",
   [COMMAND_ID.entry.tts]: transformShortcut("Shift+$mod+V"),
+
+  // Integration commands
+  [COMMAND_ID.integration.saveToSiyuan]:
+    getOS() === "macOS" ? "Control+Shift+C" : transformShortcut("Shift+$mod+S"),
 
   // Entry render commands
   [COMMAND_ID.entryRender.nextEntry]: "L, ArrowRight",
@@ -101,6 +105,7 @@ export const allowCustomizeCommands = new Set([
   COMMAND_ID.entry.share,
   COMMAND_ID.entry.star,
   COMMAND_ID.entry.tts,
+  COMMAND_ID.integration.saveToSiyuan,
 ] as const)
 type ExtractSetType<T extends Set<unknown>> = T extends Set<infer U> ? U : never
 export type AllowCustomizeCommandId = ExtractSetType<typeof allowCustomizeCommands>

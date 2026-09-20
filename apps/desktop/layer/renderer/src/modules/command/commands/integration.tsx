@@ -59,7 +59,7 @@ const useRegisterSiyuanCommand = () => {
       : defineFollowCommand({
           id: COMMAND_ID.integration.saveToSiyuan,
           label: t("siyuan.save"),
-          icon: <i className="i-mgc-notebook-cute-re" />,
+          icon: <i className="i-mingcute-notebook-line" />,
           category,
           run: ({ entryId }: { entryId: string }) => {
             const url = getEntry(entryId)?.url

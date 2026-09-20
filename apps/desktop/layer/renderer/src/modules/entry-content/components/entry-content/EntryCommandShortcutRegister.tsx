@@ -1,5 +1,6 @@
 import { useGlobalFocusableScopeSelector } from "@follow/components/common/Focusable/hooks.js"
 import type { FeedViewType } from "@follow/constants"
+import { IN_ELECTRON } from "@follow/shared/constants"
 import { useEntry } from "@follow/store/entry/hooks"
 import { useHotkeys } from "react-hotkeys-hook"
 
@@ -23,6 +24,12 @@ export const EntryCommandShortcutRegister = ({
 
   const when = useGlobalFocusableScopeSelector(FocusablePresets.isEntryRender)
   const baseCondition = !hasModal && when
+
+  useCommandBinding({
+    when: baseCondition && IN_ELECTRON && !!entry?.url,
+    commandId: COMMAND_ID.integration.saveToSiyuan,
+    args: [{ entryId }],
+  })
 
   useCommandBinding({
     when: baseCondition && !!entry?.url,

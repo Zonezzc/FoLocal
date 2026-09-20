@@ -278,6 +278,7 @@ export const useEntryActions = ({ entryId, view }: { entryId: string; view: Feed
       new EntryActionMenuItem({
         id: COMMAND_ID.integration.saveToSiyuan,
         onClick: runCmdFn(COMMAND_ID.integration.saveToSiyuan, [{ entryId }]),
+        shortcut: IN_ELECTRON ? shortcuts[COMMAND_ID.integration.saveToSiyuan] : undefined,
         hide: !IN_ELECTRON || !entry?.url,
         requiresLogin: false,
         entryId,

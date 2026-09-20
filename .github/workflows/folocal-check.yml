@@ -73,6 +73,7 @@ jobs:
           pnpm --filter @follow/clipper-core test
           pnpm --filter @follow/electron-main exec vitest run src/lib/siyuan-clips.test.ts src/lib/siyuan-config.test.ts src/ipc/services/source-article.test.ts
           pnpm --filter @follow/web exec vitest run src/modules/integration/source-article.test.ts
+          pnpm --filter @follow/web exec vitest run src/modules/entry-content/components/entry-content/EntryCommandShortcutRegister.test.tsx
           pnpm --filter @follow/electron-main exec vitest run src/before-bootstrap.test.ts src/lib/local-identity.test.ts src/lib/profile-backup.test.ts src/lib/proxy.test.ts src/lib/local-app.test.ts src/manager/app.test.ts
           pnpm --filter @follow/web exec vitest run src/lib/local-icons.test.ts src/hooks/use-local-refresh-sync.test.tsx src/modules/player/entry-tts.test.ts
       - name: Build Electron application

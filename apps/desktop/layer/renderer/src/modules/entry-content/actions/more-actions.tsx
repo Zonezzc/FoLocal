@@ -22,6 +22,7 @@ import {
 import { useRequireLogin } from "~/hooks/common/useRequireLogin"
 import { COMMAND_ID } from "~/modules/command/commands/id"
 import { hasCommand, useCommand, useRunCommandFn } from "~/modules/command/hooks/use-command"
+import { useCommandShortcuts } from "~/modules/command/hooks/use-command-binding"
 import type { FollowCommandId } from "~/modules/command/types"
 
 export const MoreActions = ({
@@ -186,6 +187,7 @@ export const CommandDropdownMenuItem = ({
   disabled?: boolean
 }) => {
   const command = useCommand(commandId)
+  const shortcuts = useCommandShortcuts()
 
   if (!command) return null
 
@@ -205,6 +207,7 @@ export const CommandDropdownMenuItem = ({
       key={command.id}
       className="pl-3"
       icon={command.icon}
+      shortcut={shortcuts[commandId]}
       onSelect={disabled ? undefined : onClick}
       active={active}
       disabled={disabled}
