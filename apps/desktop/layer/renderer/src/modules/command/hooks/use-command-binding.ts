@@ -42,7 +42,7 @@ export const defaultCommandShortcuts = {
 
   // Integration commands
   [COMMAND_ID.integration.saveToSiyuan]:
-    getOS() === "macOS" ? "Control+Shift+C" : transformShortcut("Shift+$mod+S"),
+    getOS() === "macOS" ? "Shift+Control+C" : transformShortcut("Shift+$mod+S"),
 
   // Entry render commands
   [COMMAND_ID.entryRender.nextEntry]: "L, ArrowRight",
