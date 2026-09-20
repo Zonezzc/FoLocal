@@ -124,6 +124,27 @@ db.transaction(() => {
   ); PRAGMA user_version = 1;`)
 })()
 
+const refreshColumns = new Set(
+  (db.prepare("PRAGMA table_info(feed_refresh_state)").all() as { name: string }[]).map(
+    (row) => row.name,
+  ),
+)
+for (const [name, type] of [
+  ["error_kind", "TEXT"],
+  ["last_duration_ms", "INTEGER"],
+]) {
+  if (!refreshColumns.has(name!))
+    db.exec(`ALTER TABLE feed_refresh_state ADD COLUMN ${name} ${type}`)
+}
+// Recover offline states written by releases that did not store a structured error category.
+db.exec(`UPDATE feed_refresh_state SET error_kind='offline'
+  WHERE error_kind IS NULL AND feed_id IN (
+    SELECT id FROM feeds WHERE error_message LIKE '%ERR_INTERNET_DISCONNECTED%'
+  );
+  CREATE TABLE IF NOT EXISTS refresh_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, result TEXT NOT NULL
+  );`)
+
 export const getLocalSetting = (key: string): string | null => {
   const row = db.prepare("SELECT value FROM local_settings WHERE key=?").get(key) as
     { value: string } | undefined

@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
   configure: vi.fn(),
+  online: vi.fn().mockReturnValue(true),
+  configureOnline: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
   proxy: vi.fn().mockResolvedValue(undefined),
@@ -10,12 +12,13 @@ const mocks = vi.hoisted(() => ({
 }))
 vi.mock("electron", () => ({
   app: { getPath: () => "/isolated/profile", once: mocks.once },
-  net: { fetch: mocks.fetch },
+  net: { fetch: mocks.fetch, isOnline: mocks.online },
 }))
 vi.mock("./proxy", () => ({ updateProxy: mocks.proxy }))
 vi.mock("@follow/server", () => ({
   app: { request: vi.fn() },
   setNetworkFetch: mocks.configure,
+  setNetworkOnline: mocks.configureOnline,
   startRefreshScheduler: mocks.start,
   stopRefreshScheduler: mocks.stop,
 }))
@@ -29,6 +32,8 @@ describe("local server network integration", () => {
     const [first, second] = await Promise.all([getLocalApp(), getLocalApp()])
     expect(first).toBe(second)
     expect(mocks.start).toHaveBeenCalledOnce()
+    expect(mocks.configureOnline.mock.calls[0]![0]()).toBe(true)
+    expect(mocks.online).toHaveBeenCalledOnce()
     expect(mocks.proxy).toHaveBeenCalledOnce()
     const transport = mocks.configure.mock.calls[0]![0] as typeof fetch
     const signal = new AbortController().signal

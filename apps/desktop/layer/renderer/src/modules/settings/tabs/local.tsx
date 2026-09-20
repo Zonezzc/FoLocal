@@ -143,6 +143,7 @@ export const SettingLocalService = () => {
                 })
               : lastRun
                 ? t("local.last_run", {
+                    interpolation: { escapeValue: false },
                     time: new Date(lastRun.finishedAt).toLocaleString(),
                     total: lastRun.total,
                     failed: lastRun.failed,

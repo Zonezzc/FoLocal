@@ -63,6 +63,36 @@ afterAll(() => {
 })
 
 describe("local release regressions", () => {
+  it("keeps diagnostic routes scoped and exposes persisted batch history", async () => {
+    seed()
+    fetchMock.mockResolvedValue(new Response(null, { status: 410 }))
+    const refresh = await post("/feeds/refresh", { ids: ["fixture-feed"] })
+    expect(refresh.status).toBe(200)
+    const health = await (await app.request("/local/feed-health")).json()
+    expect(health.data).toEqual([
+      expect.objectContaining({ id: "fixture-feed", errorKind: "permanent", failures: 1 }),
+    ])
+    const history = await (await app.request("/local/refresh-history")).json()
+    expect(history.data[0]).toMatchObject({ total: 1, completed: 1, failed: 1, deferred: 0 })
+    expect(history.data[0].durationMs).toBeGreaterThanOrEqual(0)
+    expect(JSON.stringify(history)).not.toContain("fixture.test")
+    const pause = await app.request("/local/feed-health/fixture-feed", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ paused: true }),
+    })
+    expect(pause.status).toBe(200)
+    expect((await (await app.request("/local/feed-health")).json()).data[0].paused).toBe(1)
+    expect(
+      (
+        await app.request("/local/feed-health/unknown", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ paused: false }),
+        })
+      ).status,
+    ).toBe(404)
+  })
   it.each([
     [false, "asc"],
     [false, "desc"],

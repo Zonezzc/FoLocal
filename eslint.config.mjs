@@ -98,6 +98,8 @@ export default defineConfig(
     yaml: false,
     ignores: [
       ".context/**",
+      ".gitnexus/**",
+      ".codegraph/**",
       "resources/**",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",

@@ -16,6 +16,7 @@ export function getLocalApp() {
     const server = await import("@follow/server")
     await updateProxy()
     server.setNetworkFetch((input, init) => net.fetch(input, init))
+    server.setNetworkOnline(() => net.isOnline())
     server.startRefreshScheduler()
     app.once("before-quit", () => server.stopRefreshScheduler())
     return server.app

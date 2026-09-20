@@ -4,6 +4,8 @@ CHANGELOG.md
 .context
 .waylog
 .vinext
+.gitnexus/
+.codegraph/
 
 apps/external/postcss.config.cjs
 

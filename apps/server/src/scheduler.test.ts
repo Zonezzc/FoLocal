@@ -4,12 +4,15 @@ import { tmpdir } from "node:os"
 import { join } from "pathe"
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { FeedFetchError } from "./feed-errors.js"
+
 const mocks = vi.hoisted(() => ({ refresh: vi.fn() }))
 vi.mock("./rss.js", () => ({ refreshFeed: mocks.refresh }))
 const folder = mkdtempSync(join(tmpdir(), "folocal-scheduler-"))
 vi.stubEnv("DATABASE_PATH", join(folder, "test.db"))
 const { db } = await import("./db.js")
 const scheduler = await import("./scheduler.js")
+const { getRefreshHistory } = await import("./refresh-history.js")
 const seed = (count: number) => {
   for (let n = 0; n < count; n++) {
     const id = String(n)
@@ -30,10 +33,11 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date("2026-09-20T00:00:00Z"))
   mocks.refresh.mockReset().mockResolvedValue({ notModified: false })
+  scheduler.setNetworkOnline(() => true)
 })
 afterEach(() => {
   scheduler.stopRefreshScheduler()
-  db.exec("DELETE FROM feeds; DELETE FROM local_settings;")
+  db.exec("DELETE FROM feeds; DELETE FROM local_settings; DELETE FROM refresh_runs;")
   vi.useRealTimers()
 })
 afterAll(() => {
@@ -43,6 +47,67 @@ afterAll(() => {
 })
 
 describe("fair feed refresh queue", () => {
+  it("does not fetch or penalize feeds while the device is offline", async () => {
+    seed(10)
+    scheduler.setNetworkOnline(() => false)
+    await scheduler.sweepDueFeeds()
+    expect(mocks.refresh).not.toHaveBeenCalled()
+    expect(db.prepare("SELECT COUNT(*) n FROM feed_refresh_state").get()!.n).toBe(0)
+    scheduler.setNetworkOnline(() => true)
+    await scheduler.sweepDueFeeds()
+    expect(mocks.refresh).toHaveBeenCalledTimes(10)
+  })
+  it("stops a batch when connectivity is lost without escalating offline failures", async () => {
+    seed(10)
+    mocks.refresh.mockRejectedValue(new Error("net::ERR_INTERNET_DISCONNECTED"))
+    const result = await scheduler.runRefreshSweep(Array.from({ length: 10 }, (_, n) => String(n)))
+    expect(mocks.refresh).toHaveBeenCalledTimes(3)
+    expect(result).toMatchObject({ total: 10, completed: 3, failed: 3, deferred: 7 })
+    expect(db.prepare("SELECT failures,error_kind FROM feed_refresh_state").all()).toEqual(
+      Array.from({ length: 3 }, () => ({ failures: 0, error_kind: "offline" })),
+    )
+  })
+  it("retries previously offline feeds in bounded groups after recovery", async () => {
+    seed(8)
+    for (let n = 0; n < 8; n++)
+      db.prepare(
+        "INSERT INTO feed_refresh_state(feed_id,failures,error_kind,next_attempt_at) VALUES(?,8,'offline','2026-09-21T00:00:00Z')",
+      ).run(String(n))
+    scheduler.setNetworkOnline(() => false)
+    await scheduler.sweepDueFeeds()
+    scheduler.setNetworkOnline(() => true)
+    await scheduler.sweepDueFeeds()
+    expect(mocks.refresh).toHaveBeenCalledTimes(3)
+    await scheduler.sweepDueFeeds()
+    expect(mocks.refresh).toHaveBeenCalledTimes(6)
+  })
+  it.each([
+    ["permanent", "2026-09-21T00:00:00.000Z"],
+    ["parse", "2026-09-20T06:00:00.000Z"],
+  ] as const)("uses a distinct retry policy for %s", async (kind, next) => {
+    seed(1)
+    mocks.refresh.mockRejectedValueOnce(new FeedFetchError(kind, "fixture error"))
+    await scheduler.runRefreshSweep(["0"])
+    expect(db.prepare("SELECT error_kind,next_attempt_at FROM feed_refresh_state").get()).toEqual({
+      error_kind: kind,
+      next_attempt_at: next,
+    })
+  })
+  it("persists bounded batch history and timing without source URLs", async () => {
+    seed(1)
+    for (let n = 0; n < 52; n++) await scheduler.runRefreshSweep(["0"])
+    const history = getRefreshHistory()
+    expect(history).toHaveLength(50)
+    expect(history[0]).toMatchObject({
+      total: 1,
+      completed: 1,
+      failed: 0,
+      deferred: 0,
+      durationMs: 0,
+    })
+    expect(JSON.stringify(history)).not.toContain("https://")
+    expect(db.prepare("SELECT COUNT(*) n FROM refresh_runs").get()!.n).toBe(50)
+  })
   it("refreshes all 461 due feeds with at most three requests in flight", async () => {
     seed(461)
     let active = 0,

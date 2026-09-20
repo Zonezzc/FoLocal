@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto"
 
-import { XMLParser } from "fast-xml-parser"
-
 import { db } from "./db.js"
+import { entryPublishedAt } from "./feed-date.js"
+import { parseFeedDocument, readFeedBody } from "./feed-document.js"
+import type { FeedErrorKind } from "./feed-errors.js"
+import { classifyFeedError, FeedFetchError } from "./feed-errors.js"
 import { normalizeFeedImage } from "./feed-image.js"
 import { describeNetworkError, networkFetch } from "./network.js"
 import {
@@ -15,11 +17,6 @@ import {
 } from "./rsshub.js"
 import type { Feed } from "./types.js"
 
-const parser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: "@_",
-  cdataPropName: "#text",
-})
 const array = <T>(value: T | T[] | undefined): T[] =>
   value === undefined ? [] : Array.isArray(value) ? value : [value]
 const text = (value: unknown): string | null => {
@@ -213,6 +210,7 @@ const fetchFeedDocument = async (requestedUrl: string, validators: FeedValidator
         ]
       : feedCandidates(route)
   const failures: string[] = []
+  const failureKinds: FeedErrorKind[] = []
 
   for (const [index, candidate] of candidates.entries()) {
     const { instanceUrl } = candidate
@@ -245,17 +243,19 @@ const fetchFeedDocument = async (requestedUrl: string, validators: FeedValidator
       if (!response.ok) {
         const reason =
           response.status === 403
-            ? "access blocked by instance"
+            ? "access denied"
             : response.status === 404
-              ? "route not found on instance"
+              ? instanceUrl
+                ? "route not found on instance"
+                : "feed not found"
               : "upstream request failed"
         const failure = `${new URL(candidate.url).hostname}: HTTP ${response.status} (${reason})`
         failures.push(failure)
+        failureKinds.push([404, 410].includes(response.status) ? "permanent" : "transient")
         if (instanceUrl) recordInstanceFailure(instanceUrl, failure)
         continue
       }
-      const content = await response.text()
-      const document = parser.parse(content) as Record<string, unknown>
+      const document = parseFeedDocument(await readFeedBody(response))
       const rssChannel = (document.rss as { channel?: Record<string, unknown> } | undefined)
         ?.channel
       const atomFeed = document.feed as Record<string, unknown> | undefined
@@ -277,6 +277,7 @@ const fetchFeedDocument = async (requestedUrl: string, validators: FeedValidator
       }
       const failure = `${new URL(candidate.url).hostname}: not RSS or Atom`
       failures.push(failure)
+      failureKinds.push("parse")
       if (instanceUrl) recordInstanceFailure(instanceUrl, failure)
     } catch (error) {
       const reason =
@@ -285,11 +286,20 @@ const fetchFeedDocument = async (requestedUrl: string, validators: FeedValidator
           : describeNetworkError(error)
       const failure = `${new URL(candidate.url).hostname}: ${reason}`
       failures.push(failure)
+      const kind = classifyFeedError(error)
+      failureKinds.push(kind)
       if (instanceUrl) recordInstanceFailure(instanceUrl, failure)
+      if (kind === "offline") break
     }
   }
 
-  throw new Error(`Unable to load feed (${failures.join("; ")})`)
+  const kind =
+    failureKinds.at(-1) === "offline"
+      ? "offline"
+      : failureKinds.every((value) => value === failureKinds[0])
+        ? failureKinds[0]!
+        : "transient"
+  throw new FeedFetchError(kind, `Unable to load feed (${failures.join("; ")})`)
 }
 
 export interface RefreshFeedOptions {
@@ -397,7 +407,7 @@ export const refreshFeed = async (
     VALUES (@id,@feedId,@title,@url,@content,@description,@guid,@author,@insertedAt,@publishedAt,@media,@categories,@attachments,NULL,NULL)
     ON CONFLICT(id) DO UPDATE SET title=excluded.title,url=excluded.url,content=excluded.content,description=excluded.description,author=excluded.author,published_at=excluded.published_at,categories=excluded.categories,media=COALESCE(excluded.media,entries.media),attachments=COALESCE(excluded.attachments,entries.attachments)`)
   const existingEntryByGuid = db.prepare(
-    `SELECT e.id FROM entries e WHERE e.feed_id=? AND e.guid=?
+    `SELECT e.id,e.published_at FROM entries e WHERE e.feed_id=? AND e.guid=?
     ORDER BY EXISTS(SELECT 1 FROM reads r WHERE r.entry_id=e.id) DESC,
       EXISTS(SELECT 1 FROM collections c WHERE c.entry_id=e.id) DESC,
       e.inserted_at ASC LIMIT 1`,
@@ -411,10 +421,12 @@ export const refreshFeed = async (
         text(item.link) ??
         text(links.find((link) => !link["@_rel"] || link["@_rel"] === "alternate")?.["@_href"])
       const guid = text(item.guid ?? item.id) ?? itemUrl ?? randomUUID()
-      const existingEntry = existingEntryByGuid.get(feedId, guid) as { id: string } | undefined
-      const rawDate = text(item.pubDate ?? item.published ?? item.updated)
-      const publishedAt =
-        rawDate && !Number.isNaN(Date.parse(rawDate)) ? new Date(rawDate).toISOString() : now
+      const existingEntry = existingEntryByGuid.get(feedId, guid) as
+        { id: string; published_at: string } | undefined
+      const publishedAt = entryPublishedAt(
+        [item.pubDate, item.published, item["dc:date"], item.updated].map(text),
+        existingEntry?.published_at ?? now,
+      )
       latest = !latest || publishedAt > latest ? publishedAt : latest
       const categories = array(item.category as unknown)
         .map((category) => text(category))

@@ -1,5 +1,7 @@
 import { db, getLocalSetting, setLocalSetting } from "./db.js"
+import { classifyFeedError } from "./feed-errors.js"
 import { describeNetworkError } from "./network.js"
+import { getRefreshHistory, saveRefreshRun } from "./refresh-history.js"
 import { refreshFeed } from "./rss.js"
 
 export const DEFAULT_REFRESH_INTERVAL_MINUTES = 60
@@ -15,6 +17,8 @@ export interface RefreshRunResult {
   notModified: number
   startedAt: string
   finishedAt: string
+  durationMs: number
+  deferred: number
 }
 export interface RefreshRunState extends RefreshRunResult {
   running: boolean
@@ -25,6 +29,11 @@ let currentRun: RefreshRunResult | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 let startupTimer: ReturnType<typeof setTimeout> | null = null
 const queue: string[] = []
+let networkOnline = () => true
+let networkPreviouslyOffline = true
+export const setNetworkOnline = (check: () => boolean) => {
+  networkOnline = check
+}
 const scheduled = new Set<string>()
 let outcomes = new Map<string, { notModified: boolean; error?: string }>()
 
@@ -48,11 +57,12 @@ const subscribedFeedIds = () =>
 export const dueFeedIds = (intervalMinutes: number) => {
   const now = new Date().toISOString()
   const cutoff = new Date(Date.now() - intervalMinutes * 60_000).toISOString()
+  let offlineCount = 0
   return (
     db
       .prepare(
         `
-    SELECT f.id FROM feeds f LEFT JOIN feed_refresh_state r ON r.feed_id=f.id
+    SELECT f.id,r.error_kind FROM feeds f LEFT JOIN feed_refresh_state r ON r.feed_id=f.id
     WHERE EXISTS (SELECT 1 FROM subscriptions s WHERE s.feed_id=f.id)
       AND COALESCE(r.paused,0)=0
       AND ((r.next_attempt_at IS NOT NULL AND r.next_attempt_at<=?)
@@ -60,27 +70,38 @@ export const dueFeedIds = (intervalMinutes: number) => {
     ORDER BY COALESCE(r.last_attempt_at,f.last_refreshed_at,'')
   `,
       )
-      .all(now, cutoff) as { id: string }[]
-  ).map((r) => r.id)
+      .all(now, cutoff) as { id: string; error_kind: string | null }[]
+  )
+    .filter((row) => row.error_kind !== "offline" || ++offlineCount <= CONCURRENCY)
+    .map((r) => r.id)
 }
-const recordAttempt = (feedId: string, error?: unknown) => {
+const recordAttempt = (feedId: string, durationMs: number, error?: unknown) => {
   const now = new Date().toISOString()
   const previous = db
     .prepare("SELECT failures FROM feed_refresh_state WHERE feed_id=?")
     .get(feedId) as { failures: number } | undefined
-  const failures = error === undefined ? 0 : (previous?.failures ?? 0) + 1
-  const delayMinutes = failures
-    ? Math.min(24 * 60, 5 * 2 ** Math.min(failures - 1, 9))
-    : Math.max(1, getRefreshIntervalMinutes())
+  const kind = error === undefined ? null : classifyFeedError(error)
+  const failures = kind === null ? 0 : (previous?.failures ?? 0) + (kind === "offline" ? 0 : 1)
+  const delayMinutes =
+    kind === "offline"
+      ? 1
+      : kind === "permanent"
+        ? 24 * 60
+        : kind === "parse"
+          ? 6 * 60
+          : kind
+            ? Math.min(24 * 60, 5 * 2 ** Math.min(failures - 1, 9))
+            : Math.max(1, getRefreshIntervalMinutes())
   const next = new Date(Date.now() + delayMinutes * 60_000).toISOString()
   db.prepare(
-    `INSERT INTO feed_refresh_state(feed_id,failures,last_attempt_at,next_attempt_at)
-    VALUES(?,?,?,?) ON CONFLICT(feed_id) DO UPDATE SET failures=excluded.failures,
-    last_attempt_at=excluded.last_attempt_at,next_attempt_at=excluded.next_attempt_at`,
-  ).run(feedId, failures, now, next)
+    `INSERT INTO feed_refresh_state(feed_id,failures,last_attempt_at,next_attempt_at,error_kind,last_duration_ms)
+    VALUES(?,?,?,?,?,?) ON CONFLICT(feed_id) DO UPDATE SET failures=excluded.failures,
+    last_attempt_at=excluded.last_attempt_at,next_attempt_at=excluded.next_attempt_at,
+    error_kind=excluded.error_kind,last_duration_ms=excluded.last_duration_ms`,
+  ).run(feedId, failures, now, next, kind, durationMs)
   db.prepare("UPDATE feeds SET error_at=?,error_message=? WHERE id=?").run(
-    failures ? now : null,
-    failures ? describeNetworkError(error) : null,
+    kind ? now : null,
+    kind ? describeNetworkError(error) : null,
     feedId,
   )
 }
@@ -96,6 +117,8 @@ export const runRefreshSweep = (feedIds: string[]): Promise<RefreshRunResult> =>
       notModified: 0,
       startedAt: new Date().toISOString(),
       finishedAt: "",
+      durationMs: 0,
+      deferred: 0,
     }
   }
   for (const id of feedIds) {
@@ -110,9 +133,11 @@ export const runRefreshSweep = (feedIds: string[]): Promise<RefreshRunResult> =>
     .then(async () => {
       const state = currentRun!
       const results = outcomes
+      let offlineDetected = false
       const worker = async () => {
-        while (queue.length) {
+        while (queue.length && !offlineDetected) {
           const id = queue.shift()!
+          const startedAt = Date.now()
           const row = db.prepare("SELECT url FROM feeds WHERE id=?").get(id) as
             { url: string } | undefined
           try {
@@ -121,12 +146,18 @@ export const runRefreshSweep = (feedIds: string[]): Promise<RefreshRunResult> =>
               results.set(id, { notModified: !!result.notModified })
               if (result.notModified) state.notModified++
               // A subscription may be removed while its request is in flight.
-              if (db.prepare("SELECT 1 FROM feeds WHERE id=?").get(id)) recordAttempt(id)
+              if (db.prepare("SELECT 1 FROM feeds WHERE id=?").get(id))
+                recordAttempt(id, Date.now() - startedAt)
             }
           } catch (error) {
             results.set(id, { notModified: false, error: describeNetworkError(error) })
             state.failed++
-            if (db.prepare("SELECT 1 FROM feeds WHERE id=?").get(id)) recordAttempt(id, error)
+            if (classifyFeedError(error) === "offline") {
+              offlineDetected = true
+              networkPreviouslyOffline = true
+            }
+            if (db.prepare("SELECT 1 FROM feeds WHERE id=?").get(id))
+              recordAttempt(id, Date.now() - startedAt, error)
           } finally {
             state.completed++
           }
@@ -134,12 +165,17 @@ export const runRefreshSweep = (feedIds: string[]): Promise<RefreshRunResult> =>
       }
       await Promise.all(Array.from({ length: CONCURRENCY }, worker))
       state.finishedAt = new Date().toISOString()
+      state.durationMs = Date.now() - Date.parse(state.startedAt)
+      state.deferred = queue.length
+      queue.length = 0
       lastRun = { ...state }
+      saveRefreshRun(lastRun)
       return lastRun
     })
     .finally(() => {
       running = null
       currentRun = null
+      queue.length = 0
       scheduled.clear()
     })
   return running
@@ -151,13 +187,29 @@ export const refreshFeedById = async (id: string) => {
   const results = outcomes
   await pending
   const result = results.get(id)
-  if (!result || result.error) throw new Error(result?.error ?? "Feed no longer exists")
+  if (!result || result.error)
+    throw new Error(
+      result?.error ??
+        (db.prepare("SELECT 1 FROM feeds WHERE id=?").get(id)
+          ? "Refresh deferred until the network recovers"
+          : "Feed no longer exists"),
+    )
   return result
 }
 export const runFullRefreshSweep = refreshAllSubscribedFeeds
 export const sweepDueFeeds = async () => {
   const interval = getRefreshIntervalMinutes()
   if (!interval) return
+  if (!networkOnline()) {
+    networkPreviouslyOffline = true
+    return
+  }
+  if (networkPreviouslyOffline) {
+    db.prepare("UPDATE feed_refresh_state SET next_attempt_at=? WHERE error_kind='offline'").run(
+      new Date().toISOString(),
+    )
+    networkPreviouslyOffline = false
+  }
   const ids = dueFeedIds(interval)
   if (ids.length) await runRefreshSweep(ids)
 }
@@ -182,9 +234,10 @@ export const stopRefreshScheduler = () => {
   if (startupTimer) clearTimeout(startupTimer)
   timer = null
   startupTimer = null
+  networkPreviouslyOffline = true
 }
 export const getRefreshStatus = (): RefreshRunState | null => {
-  const state = currentRun ?? lastRun
+  const state = currentRun ?? lastRun ?? getRefreshHistory()[0]
   return state ? { ...state, running: running !== null } : null
 }
 export const isRefreshRunning = () => running !== null

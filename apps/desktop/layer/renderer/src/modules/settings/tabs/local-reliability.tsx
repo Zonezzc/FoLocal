@@ -8,6 +8,7 @@ import { ipcServices } from "~/lib/client"
 import { localRequest } from "~/lib/local-request"
 
 import { SettingSectionTitle } from "../section"
+import { LocalRefreshHistory } from "./local-refresh-history"
 
 interface FeedHealth {
   id: string
@@ -17,6 +18,7 @@ interface FeedHealth {
   nextAttempt: string | null
   failures: number
   paused: number
+  errorKind: "offline" | "transient" | "permanent" | "parse" | "unknown" | null
 }
 export const LocalReliability = () => {
   const { t } = useTranslation("settings")
@@ -72,11 +74,15 @@ export const LocalReliability = () => {
         {(showAll ? rows : rows.slice(0, 10)).map((row) => (
           <div key={row.id} className="space-y-2 border-t border-border pt-3">
             <p className="text-sm font-medium">{row.title}</p>
+            {row.errorKind && (
+              <p className="text-xs text-text-secondary">{t(`local.error_${row.errorKind}`)}</p>
+            )}
             <p className="break-words text-xs text-text-tertiary">
               {row.error ?? t("local.health_paused")}
             </p>
             <p className="text-xs text-text-tertiary">
               {t("local.health_times", {
+                interpolation: { escapeValue: false },
                 success: row.lastSuccess
                   ? new Date(row.lastSuccess).toLocaleString()
                   : t("local.never_run"),
@@ -111,6 +117,7 @@ export const LocalReliability = () => {
           </Button>
         )}
       </div>
+      <LocalRefreshHistory />
       <SettingSectionTitle title={t("local.profile_title")} />
       <div className="space-y-3 rounded-lg border border-border p-4">
         <p className="text-sm text-text-secondary">{t("local.profile_description")}</p>

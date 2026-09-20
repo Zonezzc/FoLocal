@@ -73,7 +73,9 @@ export const ExtensionExposeProvider = () => {
 
   useEffect(() => {
     registerGlobalContext({
-      showSetting: (path) => window.router.showSettings(path),
+      showSetting: (path) => {
+        window.router.showSettings(path)
+      },
       getGeneralSettings,
       getUISettings,
 
