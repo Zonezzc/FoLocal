@@ -12,6 +12,8 @@ import { MenuService } from "./services/menu"
 import { ProfileService } from "./services/profile"
 import { ReaderService } from "./services/reader"
 import { SettingService } from "./services/setting"
+import { SiyuanService } from "./services/siyuan"
+import { SourceArticleService } from "./services/source-article"
 
 // Initialize all services
 const services = createServices([
@@ -26,6 +28,8 @@ const services = createServices([
   IntegrationService,
   LocalAPIService,
   ProfileService,
+  SourceArticleService,
+  SiyuanService,
 ])
 // Extract method types automatically from services
 export type IpcServices = MergeIpcService<typeof services>

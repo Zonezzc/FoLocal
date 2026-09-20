@@ -21,6 +21,7 @@ export const COMMAND_ID = {
     saveToReadwise: "integration:save-to-readwise",
     saveToInstapaper: "integration:save-to-instapaper",
     saveToObsidian: "integration:save-to-obsidian",
+    saveToSiyuan: "integration:save-to-siyuan",
     saveToOutline: "integration:save-to-outline",
     saveToReadeck: "integration:save-to-readeck",
     saveToCubox: "integration:save-to-cubox",

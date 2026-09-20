@@ -6,6 +6,7 @@ CHANGELOG.md
 .vinext
 .gitnexus/
 .codegraph/
+packages/internal/clipper-core/vendor/
 
 apps/external/postcss.config.cjs
 

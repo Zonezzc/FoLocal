@@ -100,6 +100,7 @@ export default defineConfig(
       ".context/**",
       ".gitnexus/**",
       ".codegraph/**",
+      "packages/internal/clipper-core/vendor/**",
       "resources/**",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",

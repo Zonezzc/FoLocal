@@ -26,6 +26,7 @@ import {
 import { ipcServices } from "~/lib/client"
 import { downloadJsonFile, selectJsonFile } from "~/lib/export"
 import { getFetchAdapter } from "~/modules/integration/fetch-adapter"
+import { SiyuanClipPanel } from "~/modules/integration/SiyuanClipPanel"
 
 import { createSetting } from "../../helper/builder"
 import { useSetSettingCanSync } from "../../modal/hooks"
@@ -412,6 +413,7 @@ export const SettingIntegration = () => {
 
   return (
     <div className="mt-4 space-y-8">
+      <SiyuanClipPanel settings />
       {/* Search Bar */}
       <div className="max-w-md">
         <InputV2

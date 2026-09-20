@@ -23,10 +23,12 @@ import { toast } from "sonner"
 
 import { getActionLanguage } from "~/atoms/settings/general"
 import { getIntegrationSettings, useIntegrationSettingKey } from "~/atoms/settings/integration"
+import { useModalStack } from "~/components/ui/modal/stacked/hooks"
 import { useRouteParams } from "~/hooks/biz/useRouteParams"
 import { ipcServices } from "~/lib/client"
 import { CustomIntegrationManager } from "~/modules/integration/custom-integration-manager"
 import { getEntryContentAsMarkdown } from "~/modules/integration/entry-content-markdown"
+import { SiyuanClipPanel } from "~/modules/integration/SiyuanClipPanel"
 
 import { useRegisterCommandEffect } from "../hooks/use-register-command"
 import { defineFollowCommand } from "../registry/command"
@@ -38,6 +40,7 @@ export const useRegisterIntegrationCommands = () => {
   useRegisterReadwiseCommands()
   useRegisterInstapaperCommands()
   useRegisterObsidianCommands()
+  useRegisterSiyuanCommand()
   useRegisterOutlineCommands()
   useRegisterReadeckCommands()
   useRegisterCuboxCommands()
@@ -47,6 +50,29 @@ export const useRegisterIntegrationCommands = () => {
 }
 
 const category: CommandCategory = "category.integration"
+const useRegisterSiyuanCommand = () => {
+  const { t } = useTranslation("settings")
+  const { present } = useModalStack()
+  useRegisterCommandEffect(
+    !IN_ELECTRON
+      ? []
+      : defineFollowCommand({
+          id: COMMAND_ID.integration.saveToSiyuan,
+          label: t("siyuan.save"),
+          icon: <i className="i-mgc-notebook-cute-re" />,
+          category,
+          run: ({ entryId }: { entryId: string }) => {
+            const url = getEntry(entryId)?.url
+            if (url)
+              present({
+                title: t("siyuan.title"),
+                content: () => <SiyuanClipPanel initialUrl={url} />,
+              })
+          },
+        }),
+    { deps: [t, present] },
+  )
+}
 const useRegisterEagleCommands = () => {
   const { t } = useTranslation()
   const { view } = useRouteParams()
@@ -895,6 +921,10 @@ export type CustomIntegrationCommand = Command<{
 }>
 
 export type IntegrationCommand =
+  | Command<{
+      id: typeof COMMAND_ID.integration.saveToSiyuan
+      fn: (payload: { entryId: string }) => void
+    }>
   | SaveToEagleCommand
   | SaveToReadwiseCommand
   | SaveToInstapaperCommand

@@ -145,6 +145,17 @@ db.exec(`UPDATE feed_refresh_state SET error_kind='offline'
     id INTEGER PRIMARY KEY AUTOINCREMENT, result TEXT NOT NULL
   );`)
 
+db.exec(`CREATE TABLE IF NOT EXISTS siyuan_clips (
+  id TEXT PRIMARY KEY, clip_key TEXT UNIQUE NOT NULL, updated_at TEXT NOT NULL, receipt TEXT, data TEXT NOT NULL
+);`)
+if (
+  !(db.prepare("PRAGMA table_info(siyuan_clips)").all() as { name: string }[]).some(
+    (column) => column.name === "receipt",
+  )
+)
+  db.exec("ALTER TABLE siyuan_clips ADD COLUMN receipt TEXT")
+db.exec("CREATE INDEX IF NOT EXISTS siyuan_clips_updated_at ON siyuan_clips(updated_at DESC)")
+
 export const getLocalSetting = (key: string): string | null => {
   const row = db.prepare("SELECT value FROM local_settings WHERE key=?").get(key) as
     { value: string } | undefined

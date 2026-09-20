@@ -22,6 +22,7 @@ const ITEMS = [
   "local-api.db-wal",
   "local-api.db-shm",
   "openai.json",
+  "siyuan.json",
   "db.json",
   "Local Storage",
   "IndexedDB",

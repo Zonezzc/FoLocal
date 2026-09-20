@@ -23,3 +23,8 @@ export function getLocalApp() {
   })()
   return localAppPromise
 }
+
+export async function getLocalDatabase() {
+  await getLocalApp()
+  return (await import("@follow/server")).db
+}

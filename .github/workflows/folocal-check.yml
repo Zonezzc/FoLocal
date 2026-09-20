@@ -40,7 +40,7 @@ jobs:
       - name: Build main process declarations
         run: pnpm --filter @follow/electron-main build
       - name: Typecheck local desktop and server
-        run: pnpm --filter @follow/server --filter @follow/electron-main --filter @follow/web typecheck
+        run: pnpm --filter @follow/server --filter @follow/electron-main --filter @follow/web --filter @follow/clipper-core typecheck
       - name: Lint maintained local changes
         run: >-
           pnpm exec eslint
@@ -60,9 +60,19 @@ jobs:
           apps/desktop/layer/renderer/src/modules/settings/tabs/local-reliability.tsx
           apps/desktop/layer/renderer/src/modules/settings/tabs/local-refresh-history.tsx
           apps/desktop/layer/renderer/src/modules/player/entry-tts.test.ts
+          apps/desktop/layer/main/src/lib/siyuan*.ts
+          apps/desktop/layer/main/src/lib/clip-network.ts
+          apps/desktop/layer/main/src/ipc/services/siyuan.ts
+          apps/desktop/layer/main/src/ipc/services/source-article*.ts
+          apps/desktop/layer/renderer/src/modules/integration/SiyuanClipPanel.tsx
+          apps/desktop/layer/renderer/src/modules/integration/source-article*.ts
+          packages/internal/clipper-core/src
       - name: Test server and isolation
         run: |
           pnpm --filter @follow/server test
+          pnpm --filter @follow/clipper-core test
+          pnpm --filter @follow/electron-main exec vitest run src/lib/siyuan-clips.test.ts src/lib/siyuan-config.test.ts src/ipc/services/source-article.test.ts
+          pnpm --filter @follow/web exec vitest run src/modules/integration/source-article.test.ts
           pnpm --filter @follow/electron-main exec vitest run src/before-bootstrap.test.ts src/lib/local-identity.test.ts src/lib/profile-backup.test.ts src/lib/proxy.test.ts src/lib/local-app.test.ts src/manager/app.test.ts
           pnpm --filter @follow/web exec vitest run src/lib/local-icons.test.ts src/hooks/use-local-refresh-sync.test.tsx src/modules/player/entry-tts.test.ts
       - name: Build Electron application

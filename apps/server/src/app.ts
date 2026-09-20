@@ -1182,5 +1182,5 @@ app.onError((error, c) => {
 export { app }
 export { setNetworkFetch } from "./network.js"
 export { setNetworkOnline } from "./scheduler.js"
-export { databasePath }
+export { databasePath, db }
 export { getRefreshIntervalMinutes, getRefreshStatus, startRefreshScheduler, stopRefreshScheduler }

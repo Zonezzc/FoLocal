@@ -4,7 +4,7 @@ import { IN_ELECTRON } from "@follow/shared/constants"
 import { useIsEntryStarred } from "@follow/store/collection/hooks"
 import { isOnboardingEntryUrl } from "@follow/store/constants/onboarding"
 import { useEntry } from "@follow/store/entry/hooks"
-import { entrySyncServices } from "@follow/store/entry/store"
+import { entryActions, entrySyncServices } from "@follow/store/entry/store"
 import type { EntryModel } from "@follow/store/entry/types"
 import { useFeedById } from "@follow/store/feed/hooks"
 import { useIsInbox } from "@follow/store/inbox/hooks"
@@ -29,6 +29,7 @@ import { useCommandShortcuts } from "~/modules/command/hooks/use-command-binding
 import { isMutationCommandId } from "~/modules/command/mutation-command-ids"
 import type { FollowCommandId, UnknownCommand } from "~/modules/command/types"
 import { useToolbarOrderMap } from "~/modules/customize-toolbar/hooks"
+import { acquireSourceArticle } from "~/modules/integration/source-article"
 
 import { useRouteParams } from "./useRouteParams"
 
@@ -48,10 +49,14 @@ export const toggleEntryReadability = async ({ id, url }: { id: string; url: str
       [id]: ReadabilityStatus.WAITING,
     })
     try {
-      await entrySyncServices.fetchEntryReadabilityContent(id, async () => {
-        const res = await ipcServices?.reader.readability({ url })
-        return res?.content
-      })
+      if (IN_ELECTRON) {
+        const article = await acquireSourceArticle(url)
+        await entryActions.updateEntryContent({ entryId: id, readabilityContent: article.html })
+      } else
+        await entrySyncServices.fetchEntryReadabilityContent(id, async () => {
+          const res = await ipcServices?.reader.readability({ url })
+          return res?.content
+        })
 
       setReadabilityStatus({
         [id]: ReadabilityStatus.SUCCESS,
@@ -270,6 +275,13 @@ export const useEntryActions = ({ entryId, view }: { entryId: string; view: Feed
     if (!hasEntry) return []
 
     const configs: EntryActionItem[] = [
+      new EntryActionMenuItem({
+        id: COMMAND_ID.integration.saveToSiyuan,
+        onClick: runCmdFn(COMMAND_ID.integration.saveToSiyuan, [{ entryId }]),
+        hide: !IN_ELECTRON || !entry?.url,
+        requiresLogin: false,
+        entryId,
+      }),
       new EntryActionMenuItem({
         id: COMMAND_ID.integration.saveToEagle,
         onClick: runCmdFn(COMMAND_ID.integration.saveToEagle, [{ entryId }]),

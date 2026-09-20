@@ -1,0 +1,18 @@
+{
+  "source": "web-clipper-core",
+  "commit": "0a704f28eef67daffdae8c2b1cc4eebaf2992335",
+  "license": "MIT",
+  "files": {
+    "converter.ts": "431b3dd59dd6bff278fecb8a78edc7e68fcdf2438bc5dcb24c6689b61e0596fb",
+    "env.d.ts": "38d6e7f57fb5433cbf4ceac0a3ea15eeca5b61a9780dc86c56b5d4d46fca9f3d",
+    "index.ts": "149969b7f46d4056a87124f7cc672cf6d51e65fbcee2b8016b4199c7c6e14485",
+    "site-adapters/wechat-rules/gg-github.ts": "10f83c69754b254e240ab80a7cb707d0409e07a91e6b92b5255fece603ae84a4",
+    "site-adapters/wechat-rules/index.ts": "c04e923c83161a4b4f6147353e6128c417c5d5398265cc6bdba3f0cf5a0ec72f",
+    "site-adapters/wechat-rules/shengcai.ts": "d411a8da902a548fa6784d73f03108842a1cf8ea56360cd8d03bb7c2ce0dbf8a",
+    "site-adapters/wechat-rules/types.ts": "4b14005ce37aa5c253a5f92b32842b255dfd58d1acef0b739e58b94cc162343b",
+    "site-adapters/wechat.ts": "1eac2944ffc914a1ca2c240bbe3ae1228c5bf4198735f907230b6429faedbd4a",
+    "source-url.ts": "85a552e442bd690f32e042ca1c0a9a716f8d318147f2ada8a86ac2dd7d1d27fa",
+    "table-normalizer.ts": "be28f36159549f2512f23dee472ac2f48c6c4c51f6011ffce0a7659f42595d5a",
+    "types.ts": "ab70c1e649bf1534fa781f62bc22858d4c086b81d37955c0ad8cc6b82091650b"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "moduleResolution": "Bundler",
+    "module": "ESNext",
+    "lib": ["DOM", "ES2024"]
+  },
+  "include": ["src", "vendor"],
+  "exclude": ["node_modules"]
+}
