@@ -35,6 +35,7 @@ export class SiyuanService extends IpcService {
     notebook: string
     path: string
     assetPath?: string
+    addSourceLink?: boolean
   }) {
     this.trusted()
     saveSiyuanConfig(input)

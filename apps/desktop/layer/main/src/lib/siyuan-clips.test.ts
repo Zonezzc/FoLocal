@@ -94,6 +94,37 @@ function fixture() {
   }
 }
 describe("durable SiYuan clipping", () => {
+  it("includes a clickable source at the top by default, escaping Markdown in the title", async () => {
+    const f = fixture()
+    const result = await f.engine.save({ ...draft, title: "Original [link]\nnext" })
+    expect(result.state).toBe("complete")
+    expect(f.docs.get(result.docId!)?.content).toMatch(
+      /^> 原文地址 \[Original \\\[link\\\] next\]\(<https:\/\/source.test\/article>\)\n\n---\n\nFull original text/,
+    )
+  })
+  it("omits the generated link when disabled while still verifying and recovering the write", async () => {
+    const f = fixture()
+    f.client.config.addSourceLink = false
+    f.loseResponse()
+    const result = await f.engine.save(draft)
+    expect(result.state).toBe("uncertain")
+    const content = [...f.docs.values()][0]!.content
+    expect(content).not.toContain(draft.canonicalUrl)
+    expect(content).not.toContain("原文地址")
+    f.client.config.addSourceLink = true
+    expect((await f.engine.retry(result.id)).state).toBe("complete")
+    expect(f.docs.size).toBe(1)
+    expect([...f.docs.values()][0]!.content).toBe(content)
+  })
+  it("keeps a pending task's source-link preference across retries", async () => {
+    const f = fixture()
+    f.sourceFetch.mockRejectedValueOnce(new Error("Temporary image failure"))
+    const result = await f.engine.save(draft)
+    f.client.config.addSourceLink = false
+    const retried = await f.engine.retry(result.id)
+    expect(retried.state).toBe("complete")
+    expect(f.docs.get(retried.docId!)?.content).toMatch(/^> 原文地址 /)
+  })
   it("loads lightweight history without parsing saved article snapshots", async () => {
     const f = fixture()
     const result = await f.engine.save(draft)

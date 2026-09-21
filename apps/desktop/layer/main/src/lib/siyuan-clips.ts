@@ -31,6 +31,7 @@ interface ClipJob extends ClipReceipt {
   assets: Record<string, { path: string; hash: string }>
   finalMarkdown?: string
   assetDir?: string
+  addSourceLink?: boolean
 }
 const active = new Map<string, Promise<ClipReceipt>>()
 const receipt = (job: ClipJob): ClipReceipt => ({
@@ -104,6 +105,7 @@ export class SiyuanClips {
       endpoint: this.client.config.endpoint,
       notebook: this.client.config.notebook,
       path: targetPath(this.client.config.path, draft.title),
+      addSourceLink: this.client.config.addSourceLink !== false,
       assets: {},
       state: "pending",
       uploaded: 0,
@@ -135,7 +137,7 @@ export class SiyuanClips {
     const exported = await this.client.exportDocument(job.docId)
     if (
       exported.hPath !== job.path ||
-      !exported.content.includes(job.draft.canonicalUrl) ||
+      (job.addSourceLink !== false && !exported.content.includes(job.draft.canonicalUrl)) ||
       !exported.content.includes(`Clip ID: ${job.id}`)
     )
       throw new Error("Saved document location or source link did not match")
@@ -234,7 +236,12 @@ export class SiyuanClips {
           .filter(Boolean)
           .map((value) => value.replace(/[\r\n]/g, " "))
           .join(" · ")
-        job.finalMarkdown = `${markdown}\n\n---\n${metadata ? `${metadata}\n\n` : ""}[Source](${job.draft.canonicalUrl})\n\nClipped: ${job.draft.fetchedAt}\n\nClip ID: ${job.id}\n`
+        const title = job.title.replace(/[\r\n]+/g, " ").replace(/[\\[\]]/g, "\\$&")
+        const sourceLink =
+          job.addSourceLink !== false
+            ? `> 原文地址 [${title}](<${job.draft.canonicalUrl}>)\n\n---\n\n`
+            : ""
+        job.finalMarkdown = `${sourceLink}${markdown}\n\n---\n${metadata ? `${metadata}\n\n` : ""}Clipped: ${job.draft.fetchedAt}\n\nClip ID: ${job.id}\n`
         job.state = "writing"
         this.persist(job)
         writing = true

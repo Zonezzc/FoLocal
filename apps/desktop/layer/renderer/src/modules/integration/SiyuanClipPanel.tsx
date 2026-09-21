@@ -47,6 +47,7 @@ export function SiyuanClipPanel({
     notebook: string
     path: string
     assetPath?: string
+    addSourceLink?: boolean
   }>()
   const [token, setToken] = useState("")
   const [notebooks, setNotebooks] = useState<{ id: string; name: string }[]>([])
@@ -56,6 +57,7 @@ export function SiyuanClipPanel({
       notebook: "",
       path: "/FoLocal",
       assetPath: "/assets/FoLocal/",
+      addSourceLink: true,
     }
   const update = (key: "endpoint" | "notebook" | "path" | "assetPath", value: string) =>
     setConnection({ ...values, [key]: value })
@@ -168,6 +170,17 @@ export function SiyuanClipPanel({
             />
           </label>
           <p className="text-xs text-text-secondary">{t("siyuan.asset_path_hint")}</p>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={values.addSourceLink !== false}
+              onChange={(event) =>
+                setConnection({ ...values, addSourceLink: event.target.checked })
+              }
+            />
+            {t("siyuan.add_source_link")}
+          </label>
+          <p className="text-xs text-text-secondary">{t("siyuan.add_source_link_hint")}</p>
           <button
             className={buttonClass}
             onClick={() =>

@@ -12,6 +12,7 @@ export interface SiyuanConfig {
   notebook: string
   path: string
   assetPath?: string
+  addSourceLink?: boolean
 }
 type StoredConfig = Omit<SiyuanConfig, "token"> & { encryptedToken: string }
 const filename = () => join(app.getPath("userData"), "siyuan.json")
@@ -23,6 +24,7 @@ export const readSiyuanConfig = (): SiyuanConfig => {
       notebook: "",
       path: "/FoLocal",
       assetPath: DEFAULT_ASSET_PATH,
+      addSourceLink: true,
     }
   const stored = JSON.parse(readFileSync(filename(), "utf8")) as StoredConfig
   let token = ""
@@ -37,6 +39,7 @@ export const readSiyuanConfig = (): SiyuanConfig => {
     notebook: stored.notebook,
     path: stored.path,
     assetPath: assetDirectory(stored.assetPath),
+    addSourceLink: stored.addSourceLink !== false,
     token,
   }
 }
@@ -53,6 +56,7 @@ export const saveSiyuanConfig = (input: Omit<SiyuanConfig, "token"> & { token?: 
     notebook: input.notebook,
     path: input.path,
     assetPath: assetDirectory(input.assetPath ?? previous.assetPath),
+    addSourceLink: input.addSourceLink ?? previous.addSourceLink ?? true,
     encryptedToken: token ? safeStorage.encryptString(token).toString("base64") : "",
   }
   writeFileSync(`${filename()}.tmp`, JSON.stringify(stored), { mode: 0o600 })

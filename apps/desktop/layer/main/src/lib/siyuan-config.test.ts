@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 
 import { join } from "pathe"
@@ -22,6 +22,21 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(state.directory, { recursive: true, force: true }))
 describe("SiYuan credential storage", () => {
+  it("defaults source links on for new and legacy settings and persists an explicit opt-out", () => {
+    expect(readSiyuanConfig().addSourceLink).toBe(true)
+    const config = { endpoint: "http://localhost:6806", notebook: "book", path: "/FoLocal" }
+    writeFileSync(
+      join(state.directory, "siyuan.json"),
+      JSON.stringify({ ...config, encryptedToken: "" }),
+    )
+    expect(readSiyuanConfig().addSourceLink).toBe(true)
+    saveSiyuanConfig({ ...config, addSourceLink: false })
+    expect(readSiyuanConfig().addSourceLink).toBe(false)
+    saveSiyuanConfig(config)
+    expect(readSiyuanConfig().addSourceLink).toBe(false)
+    saveSiyuanConfig({ ...config, addSourceLink: true })
+    expect(readSiyuanConfig().addSourceLink).toBe(true)
+  })
   it("stores an encrypted token and never reuses it for a different endpoint", () => {
     const config = { endpoint: "http://localhost:6806", notebook: "book", path: "/FoLocal" }
     saveSiyuanConfig({ ...config, token: "private-token" })
